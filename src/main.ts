@@ -1,5 +1,15 @@
 import "./style.css";
 import {
+  createElement,
+  createIcons,
+  ChevronDown,
+  ChevronRight,
+  CircleQuestionMark,
+  Download,
+  Minus,
+  Plus,
+} from "lucide";
+import {
   buildSheet,
   apertureFor,
   defaults,
@@ -16,6 +26,7 @@ import {
 import type { Settings, Sheet } from "./pattern";
 import { download, toPdf, toSvg } from "./export";
 import { cameraPresets, printerPresets, printerMinimumWidth, sigma14Preset } from "./presets";
+import { anglePreview, setupAnglePreview } from "./angle-preview";
 
 const input = (
   key: keyof Settings,
@@ -34,7 +45,7 @@ app.innerHTML = `
       <form id="controls" novalidate>
         <section class="control-section"><div class="section-title"><h2>Optics</h2><button class="text-button" id="reset-settings" type="button">Reset</button></div>
           <label class="field" for="lens-preset"><span>Lens starting point</span><select id="lens-preset"><option value="custom">Custom lens / telescope</option><option value="sigma-14">Sigma 14 mm f/1.8 DG HSM Art (Canon EF)</option></select></label>
-          <p class="helper" id="lens-help" hidden>Sigma preset: 14 mm, f/1.8, 50% open, factor 180, transparency layout. Your mask dimensions, camera and printer limits are preserved. Sigma lists an 80 mm front element and no front filter thread; neither the glass diameter nor the 95.4 mm body diameter specifies a mask fit. Measure your hood/holder and keep the film clear of the curved glass. <a href="https://www.sigma-global.com/en/lenses/a017_14_18/" target="_blank" rel="noreferrer">Lens specifications</a>.</p>
+          <p class="helper" id="lens-help" hidden>Sigma preset: 14 mm, f/1.8, 50% open, factor 180, transparency layout.</p>
           <div class="spaced">${input("focalLength", "Focal length", "mm", 1, 20000)}</div>
           <p class="helper">Use the focal length of your optical setup, including reducers or Barlows. Do not apply sensor crop factor.</p>
           <label class="field spaced" for="apertureMode"><span>Optical aperture source</span><select id="apertureMode" name="apertureMode"><option value="estimated">Estimate from f-number</option><option value="manual">Known aperture / telescope override</option></select></label>
@@ -57,11 +68,13 @@ app.innerHTML = `
           <div class="spaced">
           <label class="field" for="pitchMode"><span>Slit spacing</span><select id="pitchMode" name="pitchMode"><option value="auto">Automatic</option><option value="manual">Manual pitch</option></select></label>
           </div>
-          <div class="field-grid"><div id="factor-field">${input("factor", "Bahtinov factor", "", 50, 1000)}</div><div id="manual-field" hidden>${input("manualPitch", "Pitch (slit + bar)", "mm", 0.05, 100)}</div>${input("angle", "Slit angle", "°", 5, 45)}</div>
+          <div class="field-grid"><div id="factor-field">${input("factor", "Bahtinov factor", "", 50, 1000)}</div><div id="manual-field" hidden>${input("manualPitch", "Pitch (slit + bar)", "mm", 0.05, 100)}</div><div class="angle-field">${input("angle", "Slit angle", "°", 5, 45)}<button type="button" class="help-button" id="angle-preview-button" aria-label="Show slit angle star examples" aria-describedby="angle-preview" aria-controls="angle-preview" aria-expanded="false" popovertarget="angle-preview" popovertargetaction="show"><span data-lucide="circle-question-mark"></span></button></div></div>
+          <div id="angle-preview" class="angle-preview" role="tooltip" popover>${anglePreview}</div>
           <p class="helper" id="factor-help">Higher factor = finer slits and bars, with diffraction features farther from the star, but harder to print or cut. Lower factor = coarser slits and bars, easier fabrication, and diffraction features closer to the star. Once the minimum slit/bar width is reached, increasing the factor has no further effect.</p>
+          <p class="helper" id="angle-help">Higher slit angle = a wider X between the two angled diffraction spikes. Lower angle = a narrower X, with the spikes closer together. The angle is applied in both directions: 20° means ±20°, or 40° between the angled spikes. This changes their directions, not the pitch or slit/bar widths.</p>
           <p class="helper" id="pitch-help">Pitch = focal length ÷ factor, increased if needed to meet the minimum slit/bar width.</p>
           <p class="helper" id="reference-help" hidden></p>
-          <details><summary>Advanced</summary><div class="field-grid advanced">${input("openPercent", "Open fraction", "%", 10, 90)}<div id="support-field">${input("bridge", "Support width", "mm", 0.2, 20)}</div>${input("obstruction", "Central obstruction", "mm", 0, 990)}</div></details>
+          <details><summary><span data-lucide="chevron-right"></span>Advanced</summary><div class="field-grid advanced">${input("openPercent", "Open fraction", "%", 10, 90)}<div id="support-field">${input("bridge", "Support width", "mm", 0.2, 20)}</div>${input("obstruction", "Central obstruction", "mm", 0, 990)}</div></details>
         </section>
         <section class="control-section"><h2>Print & fabrication</h2>
           <label class="field" for="printer-preset"><span>Printer preset</span><select id="printer-preset">${printerPresets.map((dpi) => `<option value="${dpi}" ${dpi === defaults.dpi ? "selected" : ""}>${dpi} DPI · ${fmt(printerMinimumWidth(dpi), 4)} mm minimum</option>`).join("")}<option value="custom">Custom / cutting template</option></select></label>
@@ -72,19 +85,32 @@ app.innerHTML = `
         </section>
       </form>
       <section class="preview-panel" aria-labelledby="preview-title">
-        <div class="preview-toolbar"><div><h2 id="preview-title">Preview</h2><span id="page-size"></span></div><div class="zoom-control" aria-label="Preview zoom"><button id="zoom-out" type="button" aria-label="Zoom out">−</button><output id="zoom-label">Fit</output><button id="zoom-in" type="button" aria-label="Zoom in">+</button></div></div>
+        <div class="preview-toolbar"><div><h2 id="preview-title">Preview</h2><span id="page-size"></span></div><div class="zoom-control" aria-label="Preview zoom"><button id="zoom-out" type="button" aria-label="Zoom out"><span data-lucide="minus"></span></button><output id="zoom-label">Fit</output><button id="zoom-in" type="button" aria-label="Zoom in"><span data-lucide="plus"></span></button></div></div>
         <div class="metrics" aria-live="polite"><div><span>Pattern pitch</span><strong id="pitch-value">—</strong></div><div><span>Slit / bar</span><strong id="slit-value">—</strong></div><div><span>Border width</span><strong id="border-value">—</strong></div></div>
         <p id="diffraction-value" class="optical-result" aria-live="polite" hidden></p>
         <div id="messages" aria-live="polite"></div>
         <div class="preview-stage" id="preview-stage"><div class="paper" id="preview"></div></div>
-        <div class="download-bar"><p>Print at <strong>100% / Actual size</strong>.<br>Disable “Fit to page”. Check calibration marks.</p><div class="download-actions"><button type="button" id="svg-button" class="secondary">Download SVG</button><button type="button" id="pdf-button" class="primary">Download PDF <span aria-hidden="true">↓</span></button></div></div>
+        <div class="download-bar"><p>Print at <strong>100% / Actual size</strong>.<br>Disable “Fit to page”. Check calibration marks.</p><div class="download-actions"><button type="button" id="svg-button" class="secondary">Download SVG <span data-lucide="download"></span></button><button type="button" id="pdf-button" class="primary">Download PDF <span data-lucide="download"></span></button></div></div>
         <p id="export-status" class="export-status" role="status"></p>
       </section>
     </div>
   </main>`;
+createIcons({
+  icons: { CircleQuestionMark, ChevronRight, Download, Minus, Plus },
+  attrs: { class: "icon", "aria-hidden": "true", focusable: "false" },
+  root: app,
+});
+// Keep native select behavior while using the same icon set for its arrow.
+const selectArrow = encodeURIComponent(
+  createElement(ChevronDown, { stroke: "#9aa8b6" }).outerHTML,
+);
+for (const select of app.querySelectorAll("select"))
+  select.style.backgroundImage = `url("data:image/svg+xml,${selectArrow}")`;
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 el("factor").setAttribute("aria-describedby", "factor-help");
+el("angle").setAttribute("aria-describedby", "angle-help");
+setupAnglePreview(el<HTMLButtonElement>("angle-preview-button"), el("angle-preview"));
 const form = el<HTMLFormElement>("controls");
 let sheet: Sheet | undefined;
 let settings = { ...defaults };

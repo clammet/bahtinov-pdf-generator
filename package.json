@@ -14,7 +14,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "jspdf": "4.2.1"
+    "jspdf": "4.2.1",
+    "lucide": "1.52.0"
   },
   "devDependencies": {
     "typescript": "7.0.2",

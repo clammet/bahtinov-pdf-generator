@@ -98,4 +98,4 @@ See [GitHub's custom Pages workflow documentation](https://docs.github.com/en/pa
 - `src/style.css`: responsive interface.
 - `src/pattern.test.ts`: physical geometry and export regression tests.
 
-The UI loads optional Google Fonts, with local sans-serif fallbacks. PDF fonts are standard Helvetica. No analytics or backend is used.
+The UI loads optional Google Fonts, with local sans-serif fallbacks. Interface icons use Lucide, bundled locally with only the selected icons. PDF fonts are standard Helvetica. No analytics or backend is used.
