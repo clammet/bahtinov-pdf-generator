@@ -84,6 +84,69 @@ h1 {
   font-size: 20px;
   font-weight: 600;
 }
+.mask-picker {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr) minmax(100px, 220px);
+  align-items: center;
+  gap: 24px;
+  width: 100%;
+  max-width: 1360px;
+  max-height: 340px;
+  overflow: auto;
+  margin-bottom: 24px;
+  padding: 20px 23px;
+  background: #18212b;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.mask-picker .helper {
+  margin: 0;
+}
+.mask-example {
+  min-width: 0;
+  text-align: center;
+}
+.mask-image-button {
+  display: block;
+  width: 100%;
+  height: 128px;
+  padding: 0;
+  background: #070b12;
+  border: 1px solid #35424f;
+  border-radius: 6px;
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.mask-image-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.mask-image-hint {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.mask-image-preview {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #536372;
+  border-radius: 8px;
+  background: #070b12;
+  box-shadow: 0 12px 36px #0008;
+}
+.mask-image-preview img {
+  display: block;
+  max-width: none;
+}
 .workspace {
   display: grid;
   grid-template-columns: 350px minmax(0, 1fr);
@@ -565,6 +628,16 @@ summary:hover {
   }
 }
 @media (max-width: 760px) {
+  .mask-picker {
+    grid-template-columns: minmax(0, 1fr) 110px;
+    gap: 12px;
+  }
+  .mask-picker > .field {
+    grid-column: 1 / -1;
+  }
+  .mask-image-button {
+    height: 110px;
+  }
   .workspace {
     grid-template-columns: 1fr;
   }

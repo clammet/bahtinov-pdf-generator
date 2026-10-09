@@ -1,7 +1,10 @@
 import { cameraPresets, printerMinimumWidth } from "./presets";
 
 export type Paper = "a4" | "letter" | "a3" | "custom";
+export type MaskType = "bahtinov" | "carey";
+export const maskNames: Record<MaskType, string> = { bahtinov: "Bahtinov", carey: "Carey" };
 export interface Settings {
+  maskType: MaskType;
   focalLength: number;
   fStop: number;
   apertureMode: "estimated" | "manual";
@@ -17,6 +20,9 @@ export interface Settings {
   manualPitch: number;
   openPercent: number;
   angle: number;
+  // Full included angles between each side's upper and lower gratings.
+  careyLeftAngle: number;
+  careyRightAngle: number;
   bridge: number;
   obstruction: number;
   paper: Paper;
@@ -25,6 +31,7 @@ export interface Settings {
   dpi: number;
 }
 export const defaults: Settings = {
+  maskType: "bahtinov",
   focalLength: 400,
   fStop: 4,
   apertureMode: "estimated",
@@ -40,6 +47,8 @@ export const defaults: Settings = {
   manualPitch: 2.222,
   openPercent: 50,
   angle: 20,
+  careyLeftAngle: 12,
+  careyRightAngle: 10,
   bridge: 1,
   obstruction: 0,
   paper: "a4",
@@ -86,6 +95,7 @@ export type Shape =
       bold?: boolean;
     };
 export interface Sheet {
+  maskType: MaskType;
   width: number;
   height: number;
   shapes: Shape[];
@@ -144,16 +154,20 @@ export function validate(s: Settings): string[] {
     ["minimumWidth", "Minimum slit/bar width", 0.001, 20],
     ["patternDiameter", "Pattern diameter", 5, 1000],
     ["outerDiameter", "Outside diameter", 6, 1100],
-    ["factor", "Bahtinov factor", 50, 1000],
+    ["factor", "Spacing factor", 50, 1000],
     ["manualPitch", "Manual pitch", 0.05, 100],
     ["openPercent", "Open fraction", 10, 90],
     ["angle", "Slit angle", 5, 45],
+    ["careyLeftAngle", "Carey left included angle", 2, 90],
+    ["careyRightAngle", "Carey right included angle", 2, 90],
     ["bridge", "Support width", 0.2, 20],
     ["obstruction", "Central obstruction", 0, 990],
     ["margin", "Page margin", 5, 40],
     ["dpi", "Printer resolution", 72, 9600],
   ];
   for (const [key, label, min, max] of ranges) {
+    if (key === "angle" && s.maskType === "carey") continue;
+    if ((key === "careyLeftAngle" || key === "careyRightAngle") && s.maskType === "bahtinov") continue;
     if (key === "bridge" && s.fabrication === "film") continue;
     if (key === "fStop" && s.apertureMode === "manual") continue;
     if (key === "opticalAperture" && s.apertureMode === "estimated") continue;
@@ -164,6 +178,8 @@ export function validate(s: Settings): string[] {
     if (!Number.isFinite(value) || value < min || value > max)
       errors.push(`${label} must be between ${min} and ${max}.`);
   }
+  if (!Object.hasOwn(maskNames, s.maskType))
+    errors.push("Choose a valid mask type.");
   if (!["a4", "a3", "letter", "custom"].includes(s.paper))
     errors.push("Choose a valid paper size.");
   if (!["auto", "manual"].includes(s.pitchMode))
@@ -179,6 +195,8 @@ export function validate(s: Settings): string[] {
   )
     errors.push("Choose a valid camera preset or Custom.");
   if (errors.length) return errors;
+  if (s.maskType === "carey" && Math.abs(s.careyLeftAngle - s.careyRightAngle) < 1e-8)
+    errors.push("Carey left and right angles must differ to produce two distinct X patterns.");
   if (s.outerDiameter <= s.patternDiameter)
     errors.push(
       "Outside diameter must be larger than the pattern diameter to leave a border.",
@@ -235,7 +253,7 @@ export function warnings(s: Settings): string[] {
     );
   if (isShortLens(s)) {
     result.push(
-      "Short-focal-length lens: centre the mask carefully and use a star near the image centre so light samples all three gratings. Inspect a full-resolution exposure. A larger front mask does not enlarge the entrance pupil or guarantee usable spikes. If spikes remain unclear, use magnified live view or a purpose-made fine-pattern focusing aid.",
+      `Short-focal-length lens: centre the mask carefully and use a star near the image centre so light samples all ${s.maskType === "carey" ? "four" : "three"} gratings. Inspect a full-resolution exposure. A larger front mask does not enlarge the entrance pupil or guarantee usable spikes. If spikes remain unclear, use magnified live view or a purpose-made fine-pattern focusing aid.`,
     );
     if (s.fabrication === "cutout")
       result.push(
@@ -302,7 +320,12 @@ export function slitPolygons(s: Settings): Point[][] {
   }));
   const top = clip(circle, 0, 1, -halfBridge);
   const bottom = clip(circle, 0, -1, -halfBridge);
-  const regions = [
+  const regions = s.maskType === "carey" ? [
+    { points: clip(top, 1, 0, -halfBridge), angle: -s.careyLeftAngle / 2 },
+    { points: clip(top, -1, 0, -halfBridge), angle: s.careyRightAngle / 2 },
+    { points: clip(bottom, 1, 0, -halfBridge), angle: s.careyLeftAngle / 2 },
+    { points: clip(bottom, -1, 0, -halfBridge), angle: -s.careyRightAngle / 2 },
+  ] : [
     { points: top, angle: 0 },
     { points: clip(bottom, 1, 0, -halfBridge), angle: s.angle },
     { points: clip(bottom, -1, 0, -halfBridge), angle: -s.angle },
@@ -349,7 +372,7 @@ export function buildSheet(s: Settings): Sheet {
     fill = "#000000",
     stroke?: string,
   ) => shapes.push({ type: "rect", x, y, w, h, fill, stroke, weight: 0.15 });
-  text(m, m + 4, 4, "BAHTINOV / FOCUSING MASK", true);
+  text(m, m + 4, 4, `${maskNames[s.maskType].toUpperCase()} / FOCUSING MASK`, true);
   text(
     m,
     m + 10,
@@ -360,7 +383,7 @@ export function buildSheet(s: Settings): Sheet {
     m,
     m + 15,
     2.6,
-    `Pitch ${fmt(pitch)} mm  |  Open ${fmt(slit)} mm  |  Bar ${fmt(pitch - slit)} mm  |  Angle +/-${fmt(s.angle)} deg`,
+    `Pitch ${fmt(pitch)} mm  |  Open ${fmt(slit)} mm  |  Bar ${fmt(pitch - slit)} mm  |  ${s.maskType === "carey" ? `Included L/R ${fmt(s.careyLeftAngle)}/${fmt(s.careyRightAngle)} deg` : `Angle +/-${fmt(s.angle)} deg`}`,
   );
   text(
     m,
@@ -451,5 +474,5 @@ export function buildSheet(s: Settings): Sheet {
     2.6,
     "Print at 100% / Actual size. Disable Fit to page. Measure the calibration targets before use.",
   );
-  return { width, height, shapes };
+  return { maskType: s.maskType, width, height, shapes };
 }

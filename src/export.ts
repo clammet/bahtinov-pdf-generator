@@ -1,5 +1,5 @@
 import type { Sheet, Shape } from "./pattern";
-import { fmt } from "./pattern";
+import { fmt, maskNames } from "./pattern";
 
 const esc = (s: string) =>
   s
@@ -22,7 +22,7 @@ function svgShape(s: Shape): string {
   }
 }
 export function toSvg(sheet: Sheet): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${sheet.width}mm" height="${sheet.height}mm" viewBox="0 0 ${sheet.width} ${sheet.height}" role="img" aria-label="Bahtinov mask print sheet"><title>Bahtinov mask — print at actual size</title><rect width="100%" height="100%" fill="white"/>${sheet.shapes.map(svgShape).join("")}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${sheet.width}mm" height="${sheet.height}mm" viewBox="0 0 ${sheet.width} ${sheet.height}" role="img" aria-label="${maskNames[sheet.maskType]} mask print sheet"><title>${maskNames[sheet.maskType]} mask — print at actual size</title><rect width="100%" height="100%" fill="white"/>${sheet.shapes.map(svgShape).join("")}</svg>`;
 }
 export async function toPdf(sheet: Sheet): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
@@ -34,9 +34,9 @@ export async function toPdf(sheet: Sheet): Promise<Blob> {
     floatPrecision: 8,
   });
   doc.setProperties({
-    title: "Bahtinov focusing mask",
+    title: `${maskNames[sheet.maskType]} focusing mask`,
     subject: "Print at 100% / Actual size",
-    creator: "Bahtinov mask generator",
+    creator: "Focusing mask generator",
   });
   doc.setDisplayMode("fullpage");
   doc.viewerPreferences({ PrintScaling: "None" });

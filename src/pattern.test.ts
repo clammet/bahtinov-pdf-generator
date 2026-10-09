@@ -16,6 +16,7 @@ import {
 } from "./pattern";
 import { toPdf, toSvg } from "./export";
 import { printerMinimumWidth, sigma14Preset } from "./presets";
+import type { Settings } from "./pattern";
 
 const area = (points: { x: number; y: number }[]) =>
   Math.abs(
@@ -159,6 +160,73 @@ describe("physical mask geometry", () => {
   });
 });
 
+describe("Carey mask geometry", () => {
+  const carey: Settings = { ...defaults, maskType: "carey", pitchMode: "manual", manualPitch: 2, openPercent: 40 };
+
+  it.each(["cutout", "film"] as const)("preserves four grating orientations, pitch and slit widths for %s", (fabrication) => {
+    const settings = { ...carey, fabrication };
+    const halfBridge = supportWidthFor(settings) / 2;
+    const groups = [
+      { x: -1, y: -1, angle: -6, centers: [] as number[] },
+      { x: 1, y: -1, angle: 5, centers: [] as number[] },
+      { x: -1, y: 1, angle: 6, centers: [] as number[] },
+      { x: 1, y: 1, angle: -5, centers: [] as number[] },
+    ];
+    const polygons = slitPolygons(settings);
+    for (const points of polygons) {
+      const group = groups.find((g) => points.every((p) =>
+        p.x * g.x >= halfBridge - 1e-8 && p.y * g.y >= halfBridge - 1e-8));
+      expect(group).toBeDefined();
+      for (const p of points)
+        expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(settings.patternDiameter / 2 + 1e-8);
+      const radians = group!.angle * Math.PI / 180;
+      const projections = points.map((p) => -Math.sin(radians) * p.x + Math.cos(radians) * p.y);
+      const min = Math.min(...projections), max = Math.max(...projections);
+      expect(max - min).toBeLessThanOrEqual(0.8 + 1e-7);
+      if (Math.abs(max - min - 0.8) < 1e-7) group!.centers.push((max + min) / 2);
+    }
+    for (const group of groups) {
+      expect(group.centers.length).toBeGreaterThan(10);
+      group.centers.sort((a, b) => a - b);
+      for (let i = 1; i < group.centers.length; i++)
+        expect(group.centers[i] - group.centers[i - 1]).toBeCloseTo(2, 7);
+    }
+    if (fabrication === "film") {
+      expect(polygons.flat().some((p) => Math.abs(p.x) < 1e-9)).toBe(true);
+      expect(polygons.flat().some((p) => Math.abs(p.y) < 1e-9)).toBe(true);
+      expect(polygons.reduce((sum, p) => sum + area(p), 0)).toBeGreaterThan(
+        slitPolygons(carey).reduce((sum, p) => sum + area(p), 0));
+    }
+  });
+
+  it("validates only the selected mask's angles and rejects degenerate Carey patterns", () => {
+    expect(validate({ ...carey, angle: NaN })).toEqual([]);
+    expect(validate({ ...defaults, careyLeftAngle: NaN, careyRightAngle: 0 })).toEqual([]);
+    for (const override of [
+      { careyLeftAngle: NaN }, { careyRightAngle: 0 }, { careyLeftAngle: 91 },
+      { careyRightAngle: 12 }, { maskType: "unknown" as Settings["maskType"] },
+    ]) {
+      expect(validate({ ...carey, ...override }).length).toBeGreaterThan(0);
+      expect(() => buildSheet({ ...carey, ...override })).toThrow();
+    }
+    expect(validate({ ...carey, careyLeftAngle: 10, careyRightAngle: 12 })).toEqual([]);
+    expect(slitPolygons({ ...carey, angle: NaN })).toEqual(slitPolygons(carey));
+    expect(slitPolygons({ ...carey, careyLeftAngle: 16 })).not.toEqual(slitPolygons(carey));
+  });
+
+  it("shares the physical sheet, obstruction and fabrication limits", () => {
+    const settings = { ...carey, obstruction: 25 };
+    const sheet = buildSheet(settings);
+    expect([sheet.width, sheet.height]).toEqual(pageSize(defaults));
+    const circles = sheet.shapes.filter((s) => s.type === "circle");
+    expect(circles[0].r).toBe(55);
+    expect(circles[1].r).toBe(12.5);
+    expect(sheet.shapes.filter((s) => s.type === "polygon")).toHaveLength(slitPolygons(settings).length);
+    expect(validate({ ...carey, minimumWidth: 1 })).not.toEqual([]);
+    expect(validate({ ...carey, outerDiameter: 200 })).not.toEqual([]);
+  });
+});
+
 describe("optical inputs and fabrication constraints", () => {
   it("preserves measured mask dimensions and printer limits when applying the Sigma starting point", () => {
     const settings = {
@@ -274,18 +342,19 @@ describe("optical inputs and fabrication constraints", () => {
 });
 
 describe("vector exports", () => {
-  it("exports physical SVG units and identical shape coordinates", () => {
-    const sheet = buildSheet(defaults),
+  it.each(["bahtinov", "carey"] as const)("exports physical SVG units and identical %s shape coordinates", (maskType) => {
+    const settings = { ...defaults, maskType };
+    const sheet = buildSheet(settings),
       svg = toSvg(sheet);
     expect(svg).toContain('width="210mm" height="297mm" viewBox="0 0 210 297"');
     expect(svg).toContain('r="55"');
-    expect(svg.match(/<polygon /g)?.length).toBe(slitPolygons(defaults).length);
+    expect(svg.match(/<polygon /g)?.length).toBe(slitPolygons(settings).length);
     expect(svg).not.toContain("<image");
   });
 
-  it("exports PDF with exact paper dimensions and no embedded raster mask", async () => {
+  it.each(["bahtinov", "carey"] as const)("exports %s PDF with exact paper dimensions and no embedded raster mask", async (maskType) => {
     for (const paper of ["a4", "letter", "custom"] as const) {
-      const sheet = buildSheet({ ...defaults, paper });
+      const sheet = buildSheet({ ...defaults, paper, maskType });
       const blob = await toPdf(sheet),
         content = await blob.text();
       expect(content.startsWith("%PDF-")).toBe(true);

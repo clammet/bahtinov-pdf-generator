@@ -20,13 +20,19 @@ import {
   referenceFeatureFor,
   referenceDpiFor,
   isShortLens,
+  maskNames,
   validate,
   warnings,
 } from "./pattern";
 import type { Settings, Sheet } from "./pattern";
 import { download, toPdf, toSvg } from "./export";
 import { cameraPresets, printerPresets, printerMinimumWidth, sigma14Preset } from "./presets";
-import { anglePreview, setupAnglePreview } from "./angle-preview";
+import { anglePreview, setupHoverPreview } from "./angle-preview";
+
+const maskExamples = {
+  bahtinov: { src: "./images/bahtinov.jpg", width: 640, height: 375 },
+  carey: { src: "./images/carey.jpg", width: 678, height: 768 },
+};
 
 const input = (
   key: keyof Settings,
@@ -39,8 +45,21 @@ const input = (
   `<label class="field" for="${key}"><span>${label}</span><span class="input-wrap"><input id="${key}" name="${key}" type="number" min="${min}" max="${max}" step="${step}" value="${defaults[key]}" required/><span class="unit">${unit}</span></span></label>`;
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
-  <header class="masthead"><h1>Bahtinov mask</h1></header>
+  <header class="masthead"><h1>Focusing mask generator</h1></header>
   <main>
+    <section class="mask-picker" aria-label="Mask selection">
+      <label class="field" for="maskType"><span>Mask type</span><select id="maskType" name="maskType" form="controls" aria-describedby="mask-help"><option value="bahtinov">Bahtinov mask</option><option value="carey">Carey mask</option></select></label>
+      <p class="helper" id="mask-help"></p>
+      <div class="mask-example">
+        <button type="button" id="mask-image-button" class="mask-image-button" aria-label="Enlarge Bahtinov focusing example" aria-controls="mask-image-preview" aria-expanded="false" popovertarget="mask-image-preview" popovertargetaction="show">
+          <img id="mask-image" src="./images/bahtinov.jpg" width="640" height="375" alt="Bahtinov diffraction spikes at three focus positions"/>
+        </button>
+        <span class="mask-image-hint">Hover or tap to enlarge</span>
+      </div>
+      <div id="mask-image-preview" class="mask-image-preview" popover aria-label="Full-resolution focusing example">
+        <img id="mask-image-full" src="./images/bahtinov.jpg" width="640" height="375" alt="Bahtinov diffraction spikes at three focus positions"/>
+      </div>
+    </section>
     <div class="workspace">
       <form id="controls" novalidate>
         <section class="control-section"><div class="section-title"><h2>Optics</h2><button class="text-button" id="reset-settings" type="button">Reset</button></div>
@@ -68,7 +87,9 @@ app.innerHTML = `
           <div class="spaced">
           <label class="field" for="pitchMode"><span>Slit spacing</span><select id="pitchMode" name="pitchMode"><option value="auto">Automatic</option><option value="manual">Manual pitch</option></select></label>
           </div>
-          <div class="field-grid"><div id="factor-field">${input("factor", "Bahtinov factor", "", 50, 1000)}</div><div id="manual-field" hidden>${input("manualPitch", "Pitch (slit + bar)", "mm", 0.05, 100)}</div><div class="angle-field">${input("angle", "Slit angle", "°", 5, 45)}<button type="button" class="help-button" id="angle-preview-button" aria-label="Show slit angle star examples" aria-describedby="angle-preview" aria-controls="angle-preview" aria-expanded="false" popovertarget="angle-preview" popovertargetaction="show"><span data-lucide="circle-question-mark"></span></button></div></div>
+          <div class="field-grid"><div id="factor-field">${input("factor", "Spacing factor", "", 50, 1000)}</div><div id="manual-field" hidden>${input("manualPitch", "Pitch (slit + bar)", "mm", 0.05, 100)}</div><div class="angle-field" id="bahtinov-angle-field">${input("angle", "Slit angle", "°", 5, 45)}<button type="button" class="help-button" id="angle-preview-button" aria-label="Show slit angle star examples" aria-describedby="angle-preview" aria-controls="angle-preview" aria-expanded="false" popovertarget="angle-preview" popovertargetaction="show"><span data-lucide="circle-question-mark"></span></button></div></div>
+          <div class="field-grid spaced" id="carey-angle-fields" hidden>${input("careyLeftAngle", "Left included angle", "°", 2, 90)}${input("careyRightAngle", "Right included angle", "°", 2, 90)}</div>
+          <p class="helper" id="carey-angle-help" hidden>Angles between the upper and lower slits on each side: 12° left means ±6°; 10° right means ±5°. Keep the two angles different to form two distinct X patterns.</p>
           <div id="angle-preview" class="angle-preview" role="tooltip" popover>${anglePreview}</div>
           <p class="helper" id="factor-help">Higher factor = finer slits and bars, with diffraction features farther from the star, but harder to print or cut. Lower factor = coarser slits and bars, easier fabrication, and diffraction features closer to the star. Once the minimum slit/bar width is reached, increasing the factor has no further effect.</p>
           <p class="helper" id="angle-help">Higher slit angle = a wider X between the two angled diffraction spikes. Lower angle = a narrower X, with the spikes closer together. The angle is applied in both directions: 20° means ±20°, or 40° between the angled spikes. This changes their directions, not the pitch or slit/bar widths.</p>
@@ -110,7 +131,10 @@ const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 el("factor").setAttribute("aria-describedby", "factor-help");
 el("angle").setAttribute("aria-describedby", "angle-help");
-setupAnglePreview(el<HTMLButtonElement>("angle-preview-button"), el("angle-preview"));
+for (const key of ["careyLeftAngle", "careyRightAngle"])
+  el(key).setAttribute("aria-describedby", "carey-angle-help");
+setupHoverPreview(el<HTMLButtonElement>("angle-preview-button"), el("angle-preview"));
+setupHoverPreview(el<HTMLButtonElement>("mask-image-button"), el("mask-image-preview"));
 const form = el<HTMLFormElement>("controls");
 let sheet: Sheet | undefined;
 let settings = { ...defaults };
@@ -138,7 +162,37 @@ function setButtons() {
 }
 function update() {
   settings = readSettings();
+  const carey = settings.maskType === "carey";
+  const example = maskExamples[settings.maskType];
+  // Preserve the originals; only the inline thumbnail is scaled by CSS.
+  for (const id of ["mask-image", "mask-image-full"]) {
+    const img = el<HTMLImageElement>(id);
+    if (img.getAttribute("src") !== example.src) {
+      if (el("mask-image-preview").matches(":popover-open"))
+        el("mask-image-preview").hidePopover();
+      img.src = example.src;
+      img.width = example.width;
+      img.height = example.height;
+      img.alt = `${maskNames[settings.maskType]} diffraction spikes at three focus positions`;
+    }
+  }
+  el("mask-image-button").setAttribute("aria-label", `Enlarge ${maskNames[settings.maskType]} focusing example`);
+  document.title = `${maskNames[settings.maskType]} — focusing mask generator`;
+  el("mask-help").textContent = carey
+    ? "Four grating regions form two overlapping X patterns. Adjust focus until their spike spacing is symmetrical. Keep the mask orientation consistent between uses."
+    : "Three grating regions form a central spike and an X. Adjust focus until the central spike crosses the centre of the X.";
+  el("bahtinov-angle-field").hidden = carey;
+  el<HTMLInputElement>("angle").disabled = carey;
+  el("angle-help").hidden = carey;
+  el("carey-angle-fields").hidden = !carey;
+  el("carey-angle-help").hidden = !carey;
+  for (const key of ["careyLeftAngle", "careyRightAngle"])
+    el<HTMLInputElement>(key).disabled = !carey;
+  if (carey && el("angle-preview").matches(":popover-open"))
+    el("angle-preview").hidePopover();
   const automatic = settings.pitchMode === "auto";
+  el<HTMLInputElement>("factor").disabled = !automatic;
+  el<HTMLInputElement>("manualPitch").disabled = automatic;
   const film = settings.fabrication === "film";
   el("support-field").hidden = film;
   el<HTMLInputElement>("bridge").disabled = film;
@@ -210,6 +264,7 @@ function update() {
   }
   setButtons();
 }
+el("maskType").addEventListener("input", update);
 form.addEventListener("submit", (event) => event.preventDefault());
 form.addEventListener("input", (event) => {
   const id = (event.target as HTMLElement).id;
@@ -254,7 +309,7 @@ function changeZoom(delta: number) {
 el("zoom-in").addEventListener("click", () => changeZoom(0.5));
 el("zoom-out").addEventListener("click", () => changeZoom(-0.5));
 function filename() {
-  return `bahtinov-${fmt(settings.focalLength)}mm-${fmt(settings.outerDiameter)}mm`;
+  return `${settings.maskType}-${fmt(settings.focalLength)}mm-${fmt(settings.outerDiameter)}mm`;
 }
 el("svg-button").addEventListener("click", () => {
   if (!sheet) return;

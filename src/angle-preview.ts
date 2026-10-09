@@ -23,7 +23,7 @@ export const anglePreview = `
   <p>Higher angle opens the X; lower angle brings the spikes closer together. At focus, all three lines meet at the star.</p>
   <p class="angle-preview-note">Schematic: white = centre spike, green = angled pair. Brightness and length are held constant to compare angles; this is not a simulated camera image.</p>`;
 
-export function setupAnglePreview(button: HTMLButtonElement, popup: HTMLElement) {
+export function setupHoverPreview(button: HTMLButtonElement, popup: HTMLElement) {
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   const cancelClose = () => clearTimeout(closeTimer);
   const isOpen = () => popup.matches(":popover-open");
