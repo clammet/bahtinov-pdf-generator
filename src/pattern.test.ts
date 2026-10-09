@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSheet,
+  apertureFor,
   defaults,
+  diffractionOffsetFor,
+  illuminatedDiameterFor,
+  referenceDpiFor,
+  referenceFeatureFor,
+  supportWidthFor,
   pageSize,
   pitchFor,
   slitPolygons,
@@ -9,6 +15,7 @@ import {
   warnings,
 } from "./pattern";
 import { toPdf, toSvg } from "./export";
+import { printerMinimumWidth, sigma14Preset } from "./presets";
 
 const area = (points: { x: number; y: number }[]) =>
   Math.abs(
@@ -96,7 +103,12 @@ describe("physical mask geometry", () => {
       { bridge: 30 },
       { pitchMode: "manual" as const, manualPitch: 0 },
       { pitchMode: "manual" as const, manualPitch: 30 },
-      { focalLength: 1, factor: 1000 },
+      { focalLength: 1, factor: 1000, minimumWidth: 0.001 },
+      { minimumWidth: 0 },
+      { minimumWidth: NaN },
+      { camera: "custom" as const, pixelSize: 0 },
+      { camera: "custom" as const, pixelSize: NaN },
+      { apertureMode: "manual" as const, opticalAperture: 0 },
       {
         patternDiameter: 1000,
         outerDiameter: 1010,
@@ -144,6 +156,120 @@ describe("physical mask geometry", () => {
         dpi: 300,
       }).join(" "),
     ).toContain("printer dots");
+  });
+});
+
+describe("optical inputs and fabrication constraints", () => {
+  it("preserves measured mask dimensions and printer limits when applying the Sigma starting point", () => {
+    const settings = {
+      ...defaults,
+      patternDiameter: 85,
+      outerDiameter: 105,
+      dpi: 300,
+      minimumWidth: 0.3,
+      ...sigma14Preset,
+    };
+    expect(settings.patternDiameter).toBe(85);
+    expect(settings.outerDiameter).toBe(105);
+    expect(settings.dpi).toBe(300);
+    expect(settings.minimumWidth).toBe(0.3);
+    expect(apertureFor(settings)).toBeCloseTo(7.7778);
+    expect(validate(settings)).toEqual([]);
+  });
+
+  it("quantifies the 14 mm fabrication tradeoff and respects real printer capabilities", () => {
+    const settings = { ...defaults, ...sigma14Preset, camera: "canon-6d" as const };
+    expect(referenceFeatureFor(settings)).toBeCloseTo(0.0388889);
+    expect(referenceDpiFor(settings)).toBe(1960);
+    expect(pitchFor(settings)).toBeCloseTo(0.254);
+    expect(diffractionOffsetFor(settings)).toBeCloseTo(4.62826);
+    expect(warnings(settings).join(" ")).toContain("5-pixel advisory");
+    const fine = { ...settings, dpi: 2400, minimumWidth: printerMinimumWidth(2400) };
+    expect(validate(fine)).toEqual([]);
+    expect(pitchFor(fine)).toBeCloseTo(14 / 180);
+    expect(diffractionOffsetFor(fine)).toBeCloseTo(15.1145);
+    expect(warnings(fine).join(" ")).not.toContain("Pitch increased");
+    expect(warnings(fine).join(" ")).toContain("Short-focal-length lens");
+    expect(referenceDpiFor({ ...fine, openPercent: 25 })).toBe(3919);
+  });
+
+  it("removes support ribs only for film, regardless of the inactive saved support width", () => {
+    const film = { ...defaults, fabrication: "film" as const, bridge: NaN };
+    expect(validate(film)).toEqual([]);
+    expect(supportWidthFor(film)).toBe(0);
+    const polygons = slitPolygons(film);
+    expect(polygons.flat().every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true);
+    expect(polygons.some((points) => points.some((p) => Math.abs(p.y) < 1e-9))).toBe(true);
+    expect(polygons.reduce((sum, points) => sum + area(points), 0)).toBeGreaterThan(
+      slitPolygons(defaults).reduce((sum, points) => sum + area(points), 0),
+    );
+    expect(validate({ ...film, fabrication: "cutout" }).length).toBeGreaterThan(0);
+    expect(buildSheet(film).shapes.filter((shape) => shape.type === "polygon")).toHaveLength(polygons.length);
+    expect(warnings({ ...defaults, ...sigma14Preset, fabrication: "cutout" }).join(" ")).toContain("Support ribs exceed");
+    expect(warnings({ ...defaults, ...sigma14Preset }).join(" ")).not.toContain("Support ribs exceed");
+  });
+
+  it("adds the actual fine grating in both calibration axes", () => {
+    const settings = { ...defaults, ...sigma14Preset, dpi: 2400, minimumWidth: printerMinimumWidth(2400) };
+    const width = pitchFor(settings) / 2;
+    const patches = buildSheet(settings).shapes.filter((s) => s.type === "rect");
+    expect(patches.some((s) => Math.abs(s.w - width) < 1e-9 && s.h === 5)).toBe(true);
+    expect(patches.some((s) => s.w === 5 && Math.abs(s.h - width) < 1e-9)).toBe(true);
+  });
+
+  it("raises automatic pitch enough for both slits and bars at unequal open fractions", () => {
+    for (const openPercent of [10, 30, 50, 70, 90]) {
+      const settings = { ...defaults, focalLength: 50, minimumWidth: 0.5, openPercent };
+      const pitch = pitchFor(settings);
+      expect(pitch * openPercent / 100).toBeGreaterThanOrEqual(0.5 - 1e-9);
+      expect(pitch * (100 - openPercent) / 100).toBeGreaterThanOrEqual(0.5 - 1e-9);
+      expect(validate(settings)).toEqual([]);
+      expect(warnings(settings).join(" ")).toContain("Pitch increased");
+    }
+  });
+
+  it("rejects undersized manual features without changing the requested pitch", () => {
+    const settings = { ...defaults, pitchMode: "manual" as const, manualPitch: 1, minimumWidth: 0.4, openPercent: 30 };
+    expect(pitchFor(settings)).toBe(1);
+    expect(validate(settings).join(" ")).toContain("minimum width");
+    expect(validate({ ...settings, manualPitch: 0.4 / 0.3 })).toEqual([]);
+    expect(() => buildSheet(settings)).toThrow();
+  });
+
+  it("rejects fabrication constraints that leave too few periods for a mask", () => {
+    expect(validate({ ...defaults, minimumWidth: 20 }).join(" ")).toContain("Pitch is too large");
+  });
+
+  it("derives printer minimums in millimetres without rounding below three dots", () => {
+    expect(printerMinimumWidth(300)).toBe(0.254);
+    expect(printerMinimumWidth(600)).toBe(0.127);
+    expect(printerMinimumWidth(1200)).toBe(0.0635);
+    expect(printerMinimumWidth(2400)).toBe(0.0318);
+    for (const dpi of [300, 600, 1200, 2400])
+      expect(printerMinimumWidth(dpi) * dpi / 25.4).toBeGreaterThanOrEqual(3 - 1e-9);
+  });
+
+  it("uses telescope aperture without requiring an f-number and limits the illuminated diameter", () => {
+    const settings = { ...defaults, apertureMode: "manual" as const, opticalAperture: 20, fStop: NaN };
+    expect(validate(settings)).toEqual([]);
+    expect(apertureFor(settings)).toBe(20);
+    expect(illuminatedDiameterFor(settings)).toBe(20);
+    expect(warnings(settings).join(" ")).toContain("fewer than ten periods");
+    expect(illuminatedDiameterFor({ ...settings, opticalAperture: 120 })).toBe(100);
+    expect(warnings({ ...settings, opticalAperture: 120 }).join(" ")).toContain("may stop down");
+    expect(apertureFor({ ...defaults, opticalAperture: NaN })).toBe(100);
+    expect(validate({ ...defaults, opticalAperture: NaN, pixelSize: NaN })).toEqual([]);
+  });
+
+  it("predicts sensor offset using actual constrained pitch and micrometre pixel size", () => {
+    const settings = { ...defaults, camera: "custom" as const, pixelSize: 4 };
+    expect(diffractionOffsetFor(defaults)).toBeNull();
+    expect(diffractionOffsetFor(settings)).toBeCloseTo(24.75);
+    expect(diffractionOffsetFor({ ...settings, pixelSize: 8 })).toBeCloseTo(12.375);
+    expect(diffractionOffsetFor({ ...settings, minimumWidth: 2 })).toBeCloseTo(13.75);
+    expect(diffractionOffsetFor({ ...settings, pitchMode: "manual", manualPitch: 2 })).toBeCloseTo(27.5);
+    expect(diffractionOffsetFor({ ...settings, camera: "canon-6d", pixelSize: 6.55 })).toBeCloseTo(15.1145);
+    expect(pitchFor(settings)).toBe(pitchFor(defaults));
   });
 });
 

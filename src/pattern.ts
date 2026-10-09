@@ -1,7 +1,15 @@
+import { cameraPresets, printerMinimumWidth } from "./presets";
+
 export type Paper = "a4" | "letter" | "a3" | "custom";
 export interface Settings {
   focalLength: number;
   fStop: number;
+  apertureMode: "estimated" | "manual";
+  opticalAperture: number;
+  camera: "none" | "custom" | (typeof cameraPresets)[number]["id"];
+  pixelSize: number;
+  minimumWidth: number;
+  fabrication: "cutout" | "film";
   patternDiameter: number;
   outerDiameter: number;
   factor: number;
@@ -19,6 +27,12 @@ export interface Settings {
 export const defaults: Settings = {
   focalLength: 400,
   fStop: 4,
+  apertureMode: "estimated",
+  opticalAperture: 100,
+  camera: "none",
+  pixelSize: 6.55,
+  minimumWidth: printerMinimumWidth(600),
+  fabrication: "cutout",
   patternDiameter: 100,
   outerDiameter: 110,
   factor: 180,
@@ -79,7 +93,29 @@ export interface Sheet {
 export const fmt = (n: number, digits = 3) =>
   Number(n.toFixed(digits)).toString();
 export const pitchFor = (s: Settings) =>
-  s.pitchMode === "auto" ? s.focalLength / s.factor : s.manualPitch;
+  s.pitchMode === "auto"
+    ? Math.max(s.focalLength / s.factor, minimumPitchFor(s))
+    : s.manualPitch;
+export const minimumPitchFor = (s: Settings) =>
+  s.minimumWidth / (Math.min(s.openPercent, 100 - s.openPercent) / 100);
+export const apertureFor = (s: Settings) =>
+  s.apertureMode === "manual" ? s.opticalAperture : s.focalLength / s.fStop;
+export const illuminatedDiameterFor = (s: Settings) =>
+  Math.min(s.patternDiameter, apertureFor(s));
+export const supportWidthFor = (s: Settings) =>
+  s.fabrication === "film" ? 0 : s.bridge;
+// A conventional starting point, not an independently optimized optical design.
+export const referenceFeatureFor = (s: Settings) =>
+  (s.focalLength / s.factor) * Math.min(s.openPercent, 100 - s.openPercent) / 100;
+export const referenceDpiFor = (s: Settings) =>
+  Math.ceil(3 * 25.4 / referenceFeatureFor(s));
+// Advisory UI threshold only; not a physical limit on Bahtinov focusing.
+export const isShortLens = (s: Settings) =>
+  s.apertureMode === "estimated" && s.focalLength <= 50;
+// First diffraction order, normal incidence, small angles, 550 nm light.
+// Focal length and pitch are mm; wavelength and camera pixels are micrometres.
+export const diffractionOffsetFor = (s: Settings): number | null =>
+  s.camera === "none" ? null : (s.focalLength * 0.55) / (pitchFor(s) * s.pixelSize);
 const HEADER = 28;
 const FOOTER = 12;
 const CALIBRATION = 76;
@@ -102,9 +138,12 @@ export function validate(s: Settings): string[] {
   const errors: string[] = [];
   const ranges: [keyof Settings, string, number, number][] = [
     ["focalLength", "Focal length", 1, 20000],
-    ["fStop", "F-stop", 0.5, 100],
+    ["fStop", "F-number", 0.5, 100],
+    ["opticalAperture", "Optical aperture", 1, 1000],
+    ["pixelSize", "Camera pixel size", 0.1, 100],
+    ["minimumWidth", "Minimum slit/bar width", 0.001, 20],
     ["patternDiameter", "Pattern diameter", 5, 1000],
-    ["outerDiameter", "Final diameter", 6, 1100],
+    ["outerDiameter", "Outside diameter", 6, 1100],
     ["factor", "Bahtinov factor", 50, 1000],
     ["manualPitch", "Manual pitch", 0.05, 100],
     ["openPercent", "Open fraction", 10, 90],
@@ -115,6 +154,10 @@ export function validate(s: Settings): string[] {
     ["dpi", "Printer resolution", 72, 9600],
   ];
   for (const [key, label, min, max] of ranges) {
+    if (key === "bridge" && s.fabrication === "film") continue;
+    if (key === "fStop" && s.apertureMode === "manual") continue;
+    if (key === "opticalAperture" && s.apertureMode === "estimated") continue;
+    if (key === "pixelSize" && s.camera === "none") continue;
     if (key === "manualPitch" && s.pitchMode === "auto") continue;
     if (key === "factor" && s.pitchMode === "manual") continue;
     const value = s[key] as number;
@@ -125,20 +168,34 @@ export function validate(s: Settings): string[] {
     errors.push("Choose a valid paper size.");
   if (!["auto", "manual"].includes(s.pitchMode))
     errors.push("Choose a valid pitch mode.");
+  if (!["estimated", "manual"].includes(s.apertureMode))
+    errors.push("Choose a valid optical aperture source.");
+  if (!["cutout", "film"].includes(s.fabrication))
+    errors.push("Choose a valid fabrication layout.");
+  if (
+    s.camera !== "none" &&
+    s.camera !== "custom" &&
+    !cameraPresets.some((preset) => preset.id === s.camera)
+  )
+    errors.push("Choose a valid camera preset or Custom.");
   if (errors.length) return errors;
   if (s.outerDiameter <= s.patternDiameter)
     errors.push(
-      "Final diameter must be larger than the pattern diameter to leave a border.",
+      "Outside diameter must be larger than the pattern diameter to leave a border.",
     );
-  if (s.obstruction >= s.patternDiameter - 2 * s.bridge)
+  if (s.obstruction >= s.patternDiameter - 2 * supportWidthFor(s))
     errors.push(
       "Central obstruction must leave room for the slits and supports.",
     );
-  if (s.bridge >= s.patternDiameter / 4)
+  if (supportWidthFor(s) >= s.patternDiameter / 4)
     errors.push(
       "Support width must be less than one quarter of the pattern diameter.",
     );
   const pitch = pitchFor(s);
+  if (pitch + 1e-9 < minimumPitchFor(s))
+    errors.push(
+      `Manual pitch makes a slit or bar narrower than the minimum width. Use a pitch of at least ${fmt(Math.ceil(minimumPitchFor(s) * 10000) / 10000, 4)} mm or reduce the minimum width.`,
+    );
   if (pitch < 0.05)
     errors.push(
       "Pitch is below 0.05 mm. Reduce the factor or use a larger manual pitch.",
@@ -162,7 +219,7 @@ export function validate(s: Settings): string[] {
   );
   if (s.outerDiameter > maxDiameter + 1e-8)
     errors.push(
-      `This sheet fits a final diameter up to ${fmt(maxDiameter, 1)} mm. Choose larger paper, a custom sheet, or turn off calibration. The mask will not be scaled.`,
+      `This sheet fits an outside diameter up to ${fmt(maxDiameter, 1)} mm. Choose larger paper, a custom sheet, or turn off calibration. The mask will not be scaled.`,
     );
   return errors;
 }
@@ -172,21 +229,43 @@ export function warnings(s: Settings): string[] {
   const minFeature =
     (pitch * Math.min(s.openPercent, 100 - s.openPercent)) / 100;
   const dots = (minFeature * s.dpi) / 25.4;
-  if (dots < 3)
+  if (s.pitchMode === "auto" && minimumPitchFor(s) > s.focalLength / s.factor)
+    result.push(
+      `Pitch increased from ${fmt(s.focalLength / s.factor, 4)} to ${fmt(pitch, 4)} mm to meet the minimum slit/bar width. First-order separation is about ${fmt(100 * (s.focalLength / s.factor) / pitch, 0)}% of the optical starting value. A larger pattern diameter will not restore that separation.`,
+    );
+  if (isShortLens(s)) {
+    result.push(
+      "Short-focal-length lens: centre the mask carefully and use a star near the image centre so light samples all three gratings. Inspect a full-resolution exposure. A larger front mask does not enlarge the entrance pupil or guarantee usable spikes. If spikes remain unclear, use magnified live view or a purpose-made fine-pattern focusing aid.",
+    );
+    if (s.fabrication === "cutout")
+      result.push(
+        "Fine slits and bars can be impractical to cut at this focal length. Consider the transparency layout, which omits support ribs; use optically clear film with opaque bars. Verify actual print detail rather than lowering the minimum width just to remove a warning.",
+      );
+  }
+  const offset = diffractionOffsetFor(s);
+  if (offset !== null && offset < 5)
+    result.push(
+      `First-order offset is only ${fmt(offset, 1)} sensor pixels at 550 nm. This triggers a 5-pixel advisory threshold, not a pass/fail optical limit; live-view downsampling may hide the pattern.`,
+    );
+  if (supportWidthFor(s) > illuminatedDiameterFor(s) * 0.1)
+    result.push(
+      "Support ribs exceed 10% of the estimated illuminated diameter and may obscure much of a small pupil. Consider a transparency layout; do not weaken a cut-out mask beyond your material's capability.",
+    );
+  if (dots + 1e-9 < 3)
     result.push(
       `The smallest slit/bar is only ${fmt(dots, 1)} printer dots wide at ${s.dpi} DPI. Inspect the fine-line targets; consider a larger pitch or higher resolution.`,
     );
-  if (s.patternDiameter < s.focalLength / s.fStop - 0.1)
+  if (s.patternDiameter < apertureFor(s) - 0.1)
     result.push(
-      "The pattern is smaller than the estimated aperture and may stop down the optics. Confirm the physical clear aperture.",
+      "The pattern is smaller than the optical aperture and may stop down the optics. Confirm the physical clear aperture.",
     );
-  if ((s.outerDiameter - s.patternDiameter) / 2 < 1)
+  if (s.fabrication === "cutout" && (s.outerDiameter - s.patternDiameter) / 2 < 1)
     result.push(
       "The border is under 1 mm wide. A cut-out mask may need a stronger rim.",
     );
-  if (s.patternDiameter / pitch < 10)
+  if (illuminatedDiameterFor(s) / pitch < 10)
     result.push(
-      "There are fewer than ten periods across the pattern; diffraction spikes may be less distinct.",
+      "There are fewer than ten periods across the illuminated aperture; diffraction spikes may be less distinct.",
     );
   return result;
 }
@@ -214,7 +293,7 @@ export function clip(
 }
 export function slitPolygons(s: Settings): Point[][] {
   const r = s.patternDiameter / 2,
-    halfBridge = s.bridge / 2;
+    halfBridge = supportWidthFor(s) / 2;
   // Inscribed circle approximation: maximum radial error < 0.005 mm.
   const segments = Math.max(180, Math.ceil(Math.PI / Math.acos(1 - 0.005 / r)));
   const circle = Array.from({ length: segments }, (_, i) => ({
@@ -275,7 +354,7 @@ export function buildSheet(s: Settings): Sheet {
     m,
     m + 10,
     2.6,
-    `${fmt(s.focalLength)} mm  |  f/${fmt(s.fStop)}  |  Pattern ${fmt(s.patternDiameter)} mm  |  Final ${fmt(s.outerDiameter)} mm`,
+    `${fmt(s.focalLength)} mm  |  Pupil ${fmt(apertureFor(s))} mm  |  Pattern ${fmt(s.patternDiameter)} mm  |  Outside ${fmt(s.outerDiameter)} mm`,
   );
   text(
     m,
@@ -287,7 +366,9 @@ export function buildSheet(s: Settings): Sheet {
     m,
     m + 20,
     2.6,
-    `Support ${fmt(s.bridge)} mm  |  Obstruction ${fmt(s.obstruction)} mm  |  Black = opaque / keep; white = open`,
+    s.fabrication === "film"
+      ? `TRANSPARENCY / no ribs  |  Obstruction ${fmt(s.obstruction)} mm  |  Black = opaque; white = clear film`
+      : `Support ${fmt(s.bridge)} mm  |  Obstruction ${fmt(s.obstruction)} mm  |  Black = opaque / keep; white = open`,
   );
   const bottom = height - m - (s.calibration ? CALIBRATION : FOOTER);
   const cx = width / 2,
@@ -357,8 +438,11 @@ export function buildSheet(s: Settings): Sheet {
     text(sx, ry + 34, 2.4, `MASK PITCH: ${fmt(pitch)} mm`);
     // Show actual duty cycle, with no rescaling, in both printer axes.
     const sampleWidth = Math.min(75, width - m - sx);
-    for (let pos = 0; pos < sampleWidth; pos += pitch)
-      rect(sx + pos, ry + 37, Math.min(pitch - slit, sampleWidth - pos), 5);
+    for (let pos = 0; pos < sampleWidth - 10; pos += pitch)
+      rect(sx + pos, ry + 37, Math.min(pitch - slit, sampleWidth - 10 - pos), 5);
+    // Actual pitch in the other printer axis, including sub-0.1 mm features.
+    for (let pos = 0; pos < 5; pos += pitch)
+      rect(sx + sampleWidth - 7, ry + 37 + pos, 5, Math.min(pitch - slit, 5 - pos));
     text(sx, ry + 47, 2.3, "Fine lines should remain separate in both axes.");
   }
   text(
