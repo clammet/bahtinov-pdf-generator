@@ -29,6 +29,8 @@ pnpm preview  # Serve the production build locally
 4. Choose A4, US Letter, A3, or a custom sheet sized to the mask. Calibration is optional. A mask that does not fit blocks export: it is never silently resized. Custom paper may require a large-format printer or external PDF poster tiling at 100%; the app does not tile pages.
 5. Download a vector PDF or a full-page SVG. SVG dimensions explicitly use millimetres. The preview fits the screen and is not a physical-size reference.
 
+Settings are saved to your browser's local storage whenever you change a control and restored on your next visit. This includes preset selections and inactive fields. **Reset** restores and saves the defaults. If browser storage is unavailable, the generator still works, but settings will not persist.
+
 ### Geometry and optical assumptions
 
 The Bahtinov mask has one half-aperture grating at 0 degrees and two quarter-aperture gratings at plus/minus the selected angle (20 degrees by default). In **Cut-out mask** layout, a horizontal support and a lower vertical support connect the slats to the border. In **Transparency** layout, these ribs are omitted: opaque bars must be printed on optically clear film, which supports the pattern. This layout is not a cut-out template; ordinary paper will not work as a transmissive mask. The inactive cut-out support width is preserved when switching layouts. A central obstruction adds an opaque disk, not a cut-out hole.

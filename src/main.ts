@@ -28,6 +28,8 @@ import type { Settings, Sheet } from "./pattern";
 import { download, toPdf, toSvg } from "./export";
 import { cameraPresets, printerPresets, printerMinimumWidth, sigma14Preset } from "./presets";
 import { anglePreview, setupHoverPreview } from "./angle-preview";
+import { loadSettings, saveSettings } from "./settings-storage";
+import type { SavedSettings } from "./settings-storage";
 
 const maskExamples = {
   bahtinov: { src: "./images/bahtinov.jpg", width: 640, height: 375 },
@@ -136,6 +138,32 @@ for (const key of ["careyLeftAngle", "careyRightAngle"])
 setupHoverPreview(el<HTMLButtonElement>("angle-preview-button"), el("angle-preview"));
 setupHoverPreview(el<HTMLButtonElement>("mask-image-button"), el("mask-image-preview"));
 const form = el<HTMLFormElement>("controls");
+// Includes the associated mask selector outside the form and inactive fields.
+const settingFields = Array.from(form.elements).filter(
+  (field): field is HTMLInputElement | HTMLSelectElement =>
+    field instanceof HTMLInputElement || field instanceof HTMLSelectElement,
+);
+const savedSettings = loadSettings();
+for (const field of settingFields) {
+  const value = savedSettings[field.id];
+  if (field instanceof HTMLInputElement && field.type === "checkbox") {
+    if (typeof value === "boolean") field.checked = value;
+  } else if (typeof value === "string") {
+    // Removed or invalid options fall back to the current default selection.
+    if (field instanceof HTMLSelectElement &&
+        !Array.from(field.options).some((option) => option.value === value)) continue;
+    field.value = value;
+  }
+}
+function persistSettings() {
+  const values: SavedSettings = {};
+  for (const field of settingFields)
+    values[field.id] = field instanceof HTMLInputElement && field.type === "checkbox"
+      ? field.checked
+      : field.value;
+  // Keep raw values so blank/invalid edits and preset selections survive reloads.
+  saveSettings(values);
+}
 let sheet: Sheet | undefined;
 let settings = { ...defaults };
 let zoom = 1;
@@ -264,7 +292,10 @@ function update() {
   }
   setButtons();
 }
-el("maskType").addEventListener("input", update);
+el("maskType").addEventListener("input", () => {
+  update();
+  persistSettings();
+});
 form.addEventListener("submit", (event) => event.preventDefault());
 form.addEventListener("input", (event) => {
   const id = (event.target as HTMLElement).id;
@@ -292,10 +323,12 @@ form.addEventListener("input", (event) => {
   if (id === "dpi" || id === "minimumWidth")
     el<HTMLSelectElement>("printer-preset").value = "custom";
   update();
+  persistSettings();
 });
 el("reset-settings").addEventListener("click", () => {
   form.reset();
   update();
+  persistSettings();
 });
 function changeZoom(delta: number) {
   zoom = Math.max(1, Math.min(3, zoom + delta));
