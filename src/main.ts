@@ -11,6 +11,7 @@ import {
   Minus,
   Plus,
   Save,
+  X,
 } from "lucide";
 import {
   buildSheet,
@@ -49,6 +50,8 @@ const input = (
   step = "any",
 ) =>
   `<label class="field" for="${key}"><span>${label}</span><span class="input-wrap"><input id="${key}" name="${key}" type="number" min="${min}" max="${max}" step="${step}" value="${defaults[key]}" required/><span class="unit">${unit}</span></span></label>`;
+const notice = (id: string) =>
+  `<div id="${id}" class="notice ${id}" hidden><p role="status"></p><button type="button" class="notice-dismiss" aria-label="Dismiss notification"><span data-lucide="x"></span></button></div>`;
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
   <header class="masthead"><h1>Focusing mask generator</h1><div class="settings-actions" aria-label="Settings actions">
@@ -57,7 +60,7 @@ app.innerHTML = `
     <button type="button" id="load-profile" class="secondary"><span data-lucide="folder-open"></span>Load</button>
   </div></header>
   <main>
-    <p id="settings-status" class="settings-status" role="status"></p>
+    ${notice("settings-status")}
     <section class="mask-picker" aria-label="Mask selection">
       <label class="field" for="maskType"><span>Mask type</span><select id="maskType" name="maskType" form="controls" aria-describedby="mask-help"><option value="bahtinov">Bahtinov mask</option><option value="carey">Carey mask</option></select></label>
       <p class="helper" id="mask-help"></p>
@@ -123,7 +126,7 @@ app.innerHTML = `
         <div id="messages" aria-live="polite"></div>
         <div class="preview-stage" id="preview-stage"><div class="paper" id="preview"></div></div>
         <div class="download-bar"><p>Print at <strong>100% / Actual size</strong>.<br>Disable “Fit to page”. Check calibration marks.</p><div class="download-actions"><button type="button" id="svg-button" class="secondary">Download SVG <span data-lucide="download"></span></button><button type="button" id="pdf-button" class="primary">Download PDF <span data-lucide="download"></span></button></div></div>
-        <p id="export-status" class="export-status" role="status"></p>
+        ${notice("export-status")}
       </section>
     </div>
   </main>
@@ -153,7 +156,7 @@ app.innerHTML = `
     <div class="dialog-actions"><button type="button" class="secondary" id="close-copy-link">Close</button></div>
   </dialog>`;
 createIcons({
-  icons: { CircleQuestionMark, ChevronRight, Download, FolderOpen, Link, Minus, Plus, Save },
+  icons: { CircleQuestionMark, ChevronRight, Download, FolderOpen, Link, Minus, Plus, Save, X },
   attrs: { class: "icon", "aria-hidden": "true", focusable: "false" },
   root: app,
 });
@@ -165,6 +168,31 @@ for (const select of app.querySelectorAll("select"))
   select.style.backgroundImage = `url("data:image/svg+xml,${selectArrow}")`;
 const el = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
+function setupNotice(id: string) {
+  const container = el(id);
+  const message = container.querySelector("p")!;
+  let timer: number | undefined;
+  function dismiss() {
+    window.clearTimeout(timer);
+    timer = undefined;
+    container.hidden = true;
+    message.textContent = "";
+  }
+  container.querySelector("button")!.addEventListener("click", dismiss);
+  return {
+    dismiss,
+    show(text: string, error = false) {
+      dismiss();
+      container.dataset.error = String(error);
+      message.setAttribute("role", error ? "alert" : "status");
+      message.textContent = text;
+      container.hidden = false;
+      if (!error) timer = window.setTimeout(dismiss, 5000);
+    },
+  };
+}
+const settingsNotice = setupNotice("settings-status");
+const exportNotice = setupNotice("export-status");
 el("factor").setAttribute("aria-describedby", "factor-help");
 el("angle").setAttribute("aria-describedby", "angle-help");
 for (const key of ["careyLeftAngle", "careyRightAngle"])
@@ -213,10 +241,10 @@ function importSettingsLink(): boolean {
     restoreSettings(sharedSettings.settings);
     update();
     persistSettings();
-    el("settings-status").textContent = "Settings loaded from link.";
+    settingsNotice.show("Settings loaded from link.");
     return true;
   } else {
-    el("settings-status").textContent = "This settings link is invalid. Your local settings were kept.";
+    settingsNotice.show("This settings link is invalid. Your local settings were kept.", true);
     return false;
   }
 }
@@ -228,7 +256,7 @@ el("copy-link").addEventListener("click", async () => {
   button.disabled = true;
   try {
     await navigator.clipboard.writeText(url);
-    el("settings-status").textContent = "Settings link copied.";
+    settingsNotice.show("Settings link copied.");
   } catch {
     const field = el<HTMLTextAreaElement>("settings-link");
     field.value = url;
@@ -260,7 +288,7 @@ el("save-profile-form").addEventListener("submit", (event) => {
   const result = saveProfile(name, snapshotSettings(), el<HTMLInputElement>("replace-profile").checked);
   if (result === "saved") {
     el<HTMLDialogElement>("save-profile-dialog").close();
-    el("settings-status").textContent = `Profile “${name}” saved.`;
+    settingsNotice.show(`Profile “${name}” saved.`);
   } else {
     el("save-profile-status").textContent = result === "exists"
       ? "This name already exists. Confirm replacement or choose another name."
@@ -297,7 +325,7 @@ el("load-profile-form").addEventListener("submit", (event) => {
   update();
   persistSettings();
   el<HTMLDialogElement>("load-profile-dialog").close();
-  el("settings-status").textContent = `Profile “${name}” loaded.`;
+  settingsNotice.show(`Profile “${name}” loaded.`);
 });
 let sheet: Sheet | undefined;
 let settings = { ...defaults };
@@ -403,7 +431,7 @@ function update() {
     p.textContent = message;
     messages.append(p);
   }
-  el("export-status").textContent = "";
+  exportNotice.dismiss();
   if (errors.length) {
     sheet = undefined;
     el("preview").replaceChildren();
@@ -485,7 +513,7 @@ el("svg-button").addEventListener("click", () => {
     new Blob([toSvg(sheet)], { type: "image/svg+xml;charset=utf-8" }),
     `${filename()}.svg`,
   );
-  el("export-status").textContent = "SVG downloaded.";
+  exportNotice.show("SVG downloaded.");
 });
 el("pdf-button").addEventListener("click", async () => {
   if (!sheet || exporting) return;
@@ -493,13 +521,13 @@ el("pdf-button").addEventListener("click", async () => {
     name = filename();
   exporting = true;
   setButtons();
-  el("export-status").textContent = "Preparing PDF…";
+  exportNotice.show("Preparing PDF…");
   try {
     download(await toPdf(snapshot), `${name}.pdf`);
-    el("export-status").textContent = "PDF downloaded.";
+    exportNotice.show("PDF downloaded.");
   } catch (error) {
     console.error(error);
-    el("export-status").textContent = "PDF failed. Retry or download SVG.";
+    exportNotice.show("PDF failed. Retry or download SVG.", true);
   } finally {
     exporting = false;
     setButtons();
