@@ -31,6 +31,10 @@ pnpm preview  # Serve the production build locally
 
 Settings are saved to your browser's local storage whenever you change a control and restored on your next visit. This includes preset selections and inactive fields. **Reset** restores and saves the defaults. If browser storage is unavailable, the generator still works, but settings will not persist.
 
+Use **Copy link** to copy a URL containing the current settings, including inactive fields and preset selections. Opening a shared link restores those settings instead of the recipient's local settings. The imported settings are saved locally, and the settings fragment is removed from the address so future reloads retain subsequent edits. If automatic copying is unavailable, a dialog lets you copy the URL manually.
+
+Use **Save** to name a settings profile stored in this browser. Saving an existing name requires checking the replacement confirmation. **Load** lists the saved profiles; select one and click **Load selected profile** to confirm replacing the current settings. Cancel leaves your current settings untouched. Profiles persist across reloads and Reset, and are separate from the automatic save. They are not included in shared links or synced between browsers.
+
 ### Geometry and optical assumptions
 
 The Bahtinov mask has one half-aperture grating at 0 degrees and two quarter-aperture gratings at plus/minus the selected angle (20 degrees by default). In **Cut-out mask** layout, a horizontal support and a lower vertical support connect the slats to the border. In **Transparency** layout, these ribs are omitted: opaque bars must be printed on optically clear film, which supports the pattern. This layout is not a cut-out template; ordinary paper will not work as a transmissive mask. The inactive cut-out support width is preserved when switching layouts. A central obstruction adds an opaque disk, not a cut-out hole.

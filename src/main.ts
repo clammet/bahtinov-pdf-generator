@@ -6,8 +6,11 @@ import {
   ChevronRight,
   CircleQuestionMark,
   Download,
+  FolderOpen,
+  Link,
   Minus,
   Plus,
+  Save,
 } from "lucide";
 import {
   buildSheet,
@@ -28,8 +31,9 @@ import type { Settings, Sheet } from "./pattern";
 import { download, toPdf, toSvg } from "./export";
 import { cameraPresets, printerPresets, printerMinimumWidth, sigma14Preset } from "./presets";
 import { anglePreview, setupHoverPreview } from "./angle-preview";
-import { loadSettings, saveSettings } from "./settings-storage";
+import { loadProfiles, loadSettings, saveProfile, saveSettings } from "./settings-storage";
 import type { SavedSettings } from "./settings-storage";
+import { parseSettingsUrl, settingsUrl, withoutSettingsUrl } from "./settings-url";
 
 const maskExamples = {
   bahtinov: { src: "./images/bahtinov.jpg", width: 640, height: 375 },
@@ -47,8 +51,13 @@ const input = (
   `<label class="field" for="${key}"><span>${label}</span><span class="input-wrap"><input id="${key}" name="${key}" type="number" min="${min}" max="${max}" step="${step}" value="${defaults[key]}" required/><span class="unit">${unit}</span></span></label>`;
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
-  <header class="masthead"><h1>Focusing mask generator</h1></header>
+  <header class="masthead"><h1>Focusing mask generator</h1><div class="settings-actions" aria-label="Settings actions">
+    <button type="button" id="copy-link" class="secondary"><span data-lucide="link"></span>Copy link</button>
+    <button type="button" id="save-profile" class="secondary"><span data-lucide="save"></span>Save</button>
+    <button type="button" id="load-profile" class="secondary"><span data-lucide="folder-open"></span>Load</button>
+  </div></header>
   <main>
+    <p id="settings-status" class="settings-status" role="status"></p>
     <section class="mask-picker" aria-label="Mask selection">
       <label class="field" for="maskType"><span>Mask type</span><select id="maskType" name="maskType" form="controls" aria-describedby="mask-help"><option value="bahtinov">Bahtinov mask</option><option value="carey">Carey mask</option></select></label>
       <p class="helper" id="mask-help"></p>
@@ -117,9 +126,34 @@ app.innerHTML = `
         <p id="export-status" class="export-status" role="status"></p>
       </section>
     </div>
-  </main>`;
+  </main>
+  <dialog id="save-profile-dialog" class="settings-dialog" aria-labelledby="save-profile-title">
+    <form id="save-profile-form">
+      <h2 id="save-profile-title">Save settings profile</h2>
+      <p class="helper">Save the current settings in this browser.</p>
+      <label class="field spaced" for="profile-name"><span>Profile name</span><input id="profile-name" type="text" maxlength="80" required autocomplete="off"/></label>
+      <label class="check-row" id="replace-profile-row" hidden><input id="replace-profile" type="checkbox"/><span><strong>Replace the existing profile with this name</strong></span></label>
+      <p id="save-profile-status" class="dialog-status" role="status"></p>
+      <div class="dialog-actions"><button type="button" class="secondary" id="cancel-save-profile">Cancel</button><button type="submit" class="primary">Save profile</button></div>
+    </form>
+  </dialog>
+  <dialog id="load-profile-dialog" class="settings-dialog" aria-labelledby="load-profile-title">
+    <form id="load-profile-form">
+      <h2 id="load-profile-title">Load settings profile</h2>
+      <p class="helper">Loading a profile replaces your current settings.</p>
+      <label class="field spaced" for="profile-selection"><span>Saved profile</span><select id="profile-selection" required></select></label>
+      <p id="load-profile-status" class="dialog-status" role="status"></p>
+      <div class="dialog-actions"><button type="button" class="secondary" id="cancel-load-profile">Cancel</button><button type="submit" class="primary" id="confirm-load-profile">Load selected profile</button></div>
+    </form>
+  </dialog>
+  <dialog id="copy-link-dialog" class="settings-dialog" aria-labelledby="copy-link-title">
+    <h2 id="copy-link-title">Copy settings link</h2>
+    <p class="helper">Automatic copying is unavailable. Copy this link manually.</p>
+    <label class="field spaced" for="settings-link"><span>Settings URL</span><textarea id="settings-link" rows="4" readonly></textarea></label>
+    <div class="dialog-actions"><button type="button" class="secondary" id="close-copy-link">Close</button></div>
+  </dialog>`;
 createIcons({
-  icons: { CircleQuestionMark, ChevronRight, Download, Minus, Plus },
+  icons: { CircleQuestionMark, ChevronRight, Download, FolderOpen, Link, Minus, Plus, Save },
   attrs: { class: "icon", "aria-hidden": "true", focusable: "false" },
   root: app,
 });
@@ -143,27 +177,128 @@ const settingFields = Array.from(form.elements).filter(
   (field): field is HTMLInputElement | HTMLSelectElement =>
     field instanceof HTMLInputElement || field instanceof HTMLSelectElement,
 );
-const savedSettings = loadSettings();
-for (const field of settingFields) {
-  const value = savedSettings[field.id];
-  if (field instanceof HTMLInputElement && field.type === "checkbox") {
-    if (typeof value === "boolean") field.checked = value;
-  } else if (typeof value === "string") {
-    // Removed or invalid options fall back to the current default selection.
-    if (field instanceof HTMLSelectElement &&
-        !Array.from(field.options).some((option) => option.value === value)) continue;
-    field.value = value;
+function restoreSettings(values: SavedSettings) {
+  form.reset();
+  for (const field of settingFields) {
+    const value = values[field.id];
+    if (field instanceof HTMLInputElement && field.type === "checkbox") {
+      if (typeof value === "boolean") field.checked = value;
+    } else if (typeof value === "string") {
+      // Removed or invalid options fall back to the current default selection.
+      if (field instanceof HTMLSelectElement &&
+          !Array.from(field.options).some((option) => option.value === value)) continue;
+      field.value = value;
+    }
   }
 }
-function persistSettings() {
+function snapshotSettings(): SavedSettings {
   const values: SavedSettings = {};
   for (const field of settingFields)
     values[field.id] = field instanceof HTMLInputElement && field.type === "checkbox"
       ? field.checked
       : field.value;
   // Keep raw values so blank/invalid edits and preset selections survive reloads.
-  saveSettings(values);
+  return values;
 }
+function persistSettings() {
+  saveSettings(snapshotSettings());
+}
+restoreSettings(loadSettings());
+function importSettingsLink(): boolean {
+  const sharedSettings = parseSettingsUrl(window.location.href);
+  if (sharedSettings.status === "absent") return false;
+  // Consume imported settings once; later reloads retain the user's new edits.
+  window.history.replaceState(window.history.state, "", withoutSettingsUrl(window.location.href));
+  if (sharedSettings.status === "loaded") {
+    restoreSettings(sharedSettings.settings);
+    update();
+    persistSettings();
+    el("settings-status").textContent = "Settings loaded from link.";
+    return true;
+  } else {
+    el("settings-status").textContent = "This settings link is invalid. Your local settings were kept.";
+    return false;
+  }
+}
+window.addEventListener("hashchange", importSettingsLink);
+
+el("copy-link").addEventListener("click", async () => {
+  const url = settingsUrl(window.location.href, snapshotSettings());
+  const button = el<HTMLButtonElement>("copy-link");
+  button.disabled = true;
+  try {
+    await navigator.clipboard.writeText(url);
+    el("settings-status").textContent = "Settings link copied.";
+  } catch {
+    const field = el<HTMLTextAreaElement>("settings-link");
+    field.value = url;
+    el<HTMLDialogElement>("copy-link-dialog").showModal();
+    field.focus();
+    field.select();
+  } finally {
+    button.disabled = false;
+  }
+});
+el("close-copy-link").addEventListener("click", () => el<HTMLDialogElement>("copy-link-dialog").close());
+
+el("save-profile").addEventListener("click", () => {
+  el<HTMLFormElement>("save-profile-form").reset();
+  el("replace-profile-row").hidden = true;
+  el("save-profile-status").textContent = "";
+  el<HTMLDialogElement>("save-profile-dialog").showModal();
+});
+el("profile-name").addEventListener("input", () => {
+  const name = el<HTMLInputElement>("profile-name").value.trim();
+  el("replace-profile-row").hidden = !loadProfiles().some((profile) => profile.name === name);
+  el<HTMLInputElement>("replace-profile").checked = false;
+  el("save-profile-status").textContent = "";
+});
+el("cancel-save-profile").addEventListener("click", () => el<HTMLDialogElement>("save-profile-dialog").close());
+el("save-profile-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = el<HTMLInputElement>("profile-name").value.trim();
+  const result = saveProfile(name, snapshotSettings(), el<HTMLInputElement>("replace-profile").checked);
+  if (result === "saved") {
+    el<HTMLDialogElement>("save-profile-dialog").close();
+    el("settings-status").textContent = `Profile “${name}” saved.`;
+  } else {
+    el("save-profile-status").textContent = result === "exists"
+      ? "This name already exists. Confirm replacement or choose another name."
+      : result === "invalid-name"
+        ? "Enter a profile name of 1–80 characters."
+        : "The profile could not be saved. Browser storage is unavailable or full.";
+    if (result === "exists") el("replace-profile-row").hidden = false;
+  }
+});
+
+el("load-profile").addEventListener("click", () => {
+  const profiles = loadProfiles().sort((a, b) => a.name.localeCompare(b.name));
+  const select = el<HTMLSelectElement>("profile-selection");
+  select.replaceChildren(new Option("Select a saved profile", ""));
+  for (const profile of profiles) select.add(new Option(profile.name, profile.name));
+  select.disabled = profiles.length === 0;
+  el<HTMLButtonElement>("confirm-load-profile").disabled = true;
+  el("load-profile-status").textContent = profiles.length ? "" : "No saved profiles yet. Use Save to create one.";
+  el<HTMLDialogElement>("load-profile-dialog").showModal();
+});
+el("profile-selection").addEventListener("change", () => {
+  el<HTMLButtonElement>("confirm-load-profile").disabled = !el<HTMLSelectElement>("profile-selection").value;
+});
+el("cancel-load-profile").addEventListener("click", () => el<HTMLDialogElement>("load-profile-dialog").close());
+el("load-profile-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = el<HTMLSelectElement>("profile-selection").value;
+  const profile = loadProfiles().find((profile) => profile.name === name);
+  if (!profile) {
+    el("load-profile-status").textContent = "This profile is unavailable. Reopen Load to refresh the list.";
+    return;
+  }
+  restoreSettings(profile.settings);
+  update();
+  persistSettings();
+  el<HTMLDialogElement>("load-profile-dialog").close();
+  el("settings-status").textContent = `Profile “${name}” loaded.`;
+});
 let sheet: Sheet | undefined;
 let settings = { ...defaults };
 let zoom = 1;
@@ -370,5 +505,5 @@ el("pdf-button").addEventListener("click", async () => {
     setButtons();
   }
 });
-update();
+if (!importSettingsLink()) update();
 changeZoom(0);
