@@ -49,6 +49,25 @@ The minimum permitted pitch is `minimum width / min(open fraction, 1 - open frac
 
 Printer presets use at least three dots per slit/bar: `3 * 25.4 / DPI` mm, rounded up to four decimal places. Available presets are 300, 600, 1200, and 2400 DPI; the default is 600 DPI (0.127 mm). This is a starting estimate, not a guarantee of resolved gaps or structural strength. Changing either width or DPI selects Custom. For cutting templates, set width to the reliable capability of the tool/material. Inspect the calibration targets and adjust accordingly.
 
+### Camera lens starting points
+
+**Lens starting point** includes the following primes, covering wide-angle nightscapes through longer focal lengths for tracked imaging. Each uses the manufacturer's focal length and maximum aperture; Samyang's manual-focus models are also sold under the Rokinon brand.
+
+| Lens (manufacturer specifications) | Focal length | Starting f-number |
+| --- | --- | --- |
+| [Sigma DG HSM Art (Canon EF)](https://www.sigma-global.com/en/lenses/a017_14_18/) | 14 mm | f/1.8 |
+| [Samyang / Rokinon ED AS IF UMC](https://samyangus.com/collections/samyang-lenses/products/14mm-f2-8-full-frame-ultra-wide-angle) | 14 mm | f/2.8 |
+| [Sigma DG DN Art](https://www.sigma-global.com/en/lenses/a023_14_14/) | 14 mm | f/1.4 |
+| [Sigma DG DN Art](https://www.sigma-global.com/en/lenses/a022_20_14/) | 20 mm | f/1.4 |
+| [Nikon AF-S NIKKOR G ED](https://www.nikon.com/company/news/2014/0912_lens_03/) | 20 mm | f/1.8 |
+| [Sony FE GM](https://electronics.sony.com/imaging/lenses/all-e-mount/p/sel24f14gm) | 24 mm | f/1.4 |
+| [Sigma DG DN Art](https://www.sigma-global.com/en/lenses/a021_35_14/) | 35 mm | f/1.4 |
+| [Canon EF STM](https://www.usa.canon.com/support/p/ef-50mm-f-1-8-stm) | 50 mm | f/1.8 |
+| [Samyang / Rokinon ED UMC](https://samyangus.com/collections/samyang-lenses/products/135mm-f2-0-full-frame-telephoto) | 135 mm | f/2 |
+| [Canon EF L II USM](https://www.usa.canon.com/support/p/ef-200mm-f-2-8l-ii-usm) | 200 mm | f/2.8 |
+
+All lens starting points set estimated aperture, automatic pitch, factor 180, 50% open, ±20° Bahtinov slits, no central obstruction and transparency layout. These are editable starting settings, not lens-specific optimized masks. Adjust the f-number to the aperture used while focusing. Changing a preset-controlled setting switches the selector to **Custom lens / telescope**. Presets preserve the mask type, Carey angles, camera, printer capabilities, minimum feature width and measured physical dimensions. The original `sigma-14` selection remains compatible with saved profiles and shared links.
+
 ### Wide-angle camera lenses
 
 The **Sigma 14 mm f/1.8 DG HSM Art (Canon EF)** starting point sets 14 mm, f/1.8, factor 180, 50% open, ±20° slits, no central obstruction, automatic pitch and the transparency layout. It preserves camera, printer capabilities, minimum feature width and physical dimensions. Selecting a finer printer preset is a separate choice; use real printer resolution (the lower axis if unequal), not interpolated resolution or image PPI.

@@ -30,7 +30,7 @@ import {
 } from "./pattern";
 import type { Settings, Sheet } from "./pattern";
 import { download, toPdf, toSvg } from "./export";
-import { cameraPresets, printerPresets, printerMinimumWidth, sigma14Preset } from "./presets";
+import { cameraPresets, lensPresets, printerPresets, printerMinimumWidth } from "./presets";
 import { anglePreview, setupHoverPreview } from "./angle-preview";
 import { loadProfiles, loadSettings, saveProfile, saveSettings } from "./settings-storage";
 import type { SavedSettings } from "./settings-storage";
@@ -77,8 +77,8 @@ app.innerHTML = `
     <div class="workspace">
       <form id="controls" novalidate>
         <section class="control-section"><div class="section-title"><h2>Optics</h2><button class="text-button" id="reset-settings" type="button">Reset</button></div>
-          <label class="field" for="lens-preset"><span>Lens starting point</span><select id="lens-preset"><option value="custom">Custom lens / telescope</option><option value="sigma-14">Sigma 14 mm f/1.8 DG HSM Art (Canon EF)</option></select></label>
-          <p class="helper" id="lens-help" hidden>Sigma preset: 14 mm, f/1.8, 50% open, factor 180, transparency layout.</p>
+          <label class="field" for="lens-preset"><span>Lens starting point</span><select id="lens-preset" aria-describedby="lens-help"><option value="custom">Custom lens / telescope</option>${lensPresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("")}</select></label>
+          <p class="helper" id="lens-help" hidden></p>
           <div class="spaced">${input("focalLength", "Focal length", "mm", 1, 20000)}</div>
           <p class="helper">Use the focal length of your optical setup, including reducers or Barlows. Do not apply sensor crop factor.</p>
           <label class="field spaced" for="apertureMode"><span>Optical aperture source</span><select id="apertureMode" name="apertureMode"><option value="estimated">Estimate from f-number</option><option value="manual">Known aperture / telescope override</option></select></label>
@@ -390,7 +390,13 @@ function update() {
   el("layout-help").textContent = film
     ? "For opaque printing on optically clear film. The film supports the bars, so no ribs cross the small pupil. This layout is not a cut-out template. Ordinary paper cannot transmit the star's light."
     : "Ribs hold the cut-out bars together. Set slit/bar and support widths for your material and cutting method.";
-  el("lens-help").hidden = el<HTMLSelectElement>("lens-preset").value !== "sigma-14";
+  const lensPreset = lensPresets.find(
+    (preset) => preset.id === el<HTMLSelectElement>("lens-preset").value,
+  );
+  el("lens-help").hidden = !lensPreset;
+  el("lens-help").textContent = lensPreset
+    ? `Starting point: ${lensPreset.settings.focalLength} mm, f/${lensPreset.settings.fStop}, 50% open, factor 180, transparency layout. Adjust the f-number if focusing stopped down; measure your mounting dimensions separately.`
+    : "";
   el("wide-angle-help").hidden = !isShortLens(settings);
   el("factor-field").hidden = !automatic;
   el("factor-help").hidden = !automatic;
@@ -462,11 +468,16 @@ el("maskType").addEventListener("input", () => {
 form.addEventListener("submit", (event) => event.preventDefault());
 form.addEventListener("input", (event) => {
   const id = (event.target as HTMLElement).id;
-  if (id === "lens-preset" && el<HTMLSelectElement>("lens-preset").value === "sigma-14") {
-    for (const [key, value] of Object.entries(sigma14Preset))
-      (form.elements.namedItem(key) as HTMLInputElement | HTMLSelectElement).value = String(value);
+  if (id === "lens-preset") {
+    const preset = lensPresets.find(
+      (preset) => preset.id === el<HTMLSelectElement>("lens-preset").value,
+    );
+    if (preset) {
+      for (const [key, value] of Object.entries(preset.settings))
+        (form.elements.namedItem(key) as HTMLInputElement | HTMLSelectElement).value = String(value);
+    }
   }
-  if (Object.keys(sigma14Preset).includes(id))
+  if (Object.keys(lensPresets[0].settings).includes(id))
     el<HTMLSelectElement>("lens-preset").value = "custom";
   if (id === "camera") {
     const preset = cameraPresets.find(

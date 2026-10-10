@@ -15,7 +15,7 @@ import {
   warnings,
 } from "./pattern";
 import { toPdf, toSvg } from "./export";
-import { printerMinimumWidth, sigma14Preset } from "./presets";
+import { lensPresets, printerMinimumWidth, sigma14Preset } from "./presets";
 import type { Settings } from "./pattern";
 
 const area = (points: { x: number; y: number }[]) =>
@@ -228,20 +228,20 @@ describe("Carey mask geometry", () => {
 });
 
 describe("optical inputs and fabrication constraints", () => {
-  it("preserves measured mask dimensions and printer limits when applying the Sigma starting point", () => {
+  it.each(lensPresets)("preserves measured mask dimensions and printer limits for $label", (preset) => {
     const settings = {
       ...defaults,
       patternDiameter: 85,
       outerDiameter: 105,
       dpi: 300,
       minimumWidth: 0.3,
-      ...sigma14Preset,
+      ...preset.settings,
     };
     expect(settings.patternDiameter).toBe(85);
     expect(settings.outerDiameter).toBe(105);
     expect(settings.dpi).toBe(300);
     expect(settings.minimumWidth).toBe(0.3);
-    expect(apertureFor(settings)).toBeCloseTo(7.7778);
+    expect(apertureFor(settings)).toBeCloseTo(preset.settings.focalLength / preset.settings.fStop);
     expect(validate(settings)).toEqual([]);
   });
 
