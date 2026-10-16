@@ -27,6 +27,32 @@ const area = (points: { x: number; y: number }[]) =>
   ) / 2;
 
 describe("physical mask geometry", () => {
+  it.each(["bahtinov", "carey"] as const)("adds an opaque square around the unchanged %s pattern", (maskType) => {
+    for (const fabrication of ["cutout", "film"] as const) {
+      const settings = { ...defaults, maskType, fabrication, calibration: false, obstruction: 20 };
+      const circle = buildSheet(settings);
+      const square = buildSheet({ ...settings, borderShape: "square" });
+      const disk = circle.shapes.find((s) => s.type === "circle")!;
+      const surround = square.shapes.find((s) => s.type === "rect")!;
+      expect(surround).toMatchObject({
+        x: disk.x - disk.r, y: disk.y - disk.r,
+        w: settings.outerDiameter, h: settings.outerDiameter, fill: "#000000",
+      });
+      expect(square.shapes.filter((s) => s.type === "polygon")).toEqual(
+        circle.shapes.filter((s) => s.type === "polygon"),
+      );
+      expect(square.shapes.filter((s) => s.type === "circle")).toEqual(
+        circle.shapes.filter((s) => s.type === "circle").slice(1),
+      );
+      expect(square.shapes.indexOf(surround)).toBeLessThan(
+        square.shapes.findIndex((s) => s.type === "polygon"),
+      );
+      expect(toSvg(square)).toContain(
+        `<rect x="${surround.x}" y="${surround.y}" width="110" height="110" fill="#000000"`,
+      );
+    }
+  });
+
   it("uses the full grating period, independent of f-stop", () => {
     expect(pitchFor({ ...defaults, focalLength: 900, factor: 180 })).toBe(5);
     expect(
@@ -100,6 +126,8 @@ describe("physical mask geometry", () => {
       { fStop: 0 },
       { patternDiameter: -1 },
       { outerDiameter: 99 },
+      { borderShape: "triangle" as Settings["borderShape"] },
+      { borderShape: "square" as const, outerDiameter: 100 },
       { obstruction: 100 },
       { bridge: 30 },
       { pitchMode: "manual" as const, manualPitch: 0 },
@@ -122,17 +150,18 @@ describe("physical mask geometry", () => {
     expect(() => buildSheet({ ...defaults, fStop: 0 })).toThrow();
   });
 
-  it("rejects a mask that cannot fit, and enlarges only custom paper", () => {
-    const large = { ...defaults, patternDiameter: 180, outerDiameter: 190 };
+  it.each(["circle", "square"] as const)("rejects a %s mask that cannot fit, and enlarges only custom paper", (borderShape) => {
+    const large = { ...defaults, borderShape, patternDiameter: 180, outerDiameter: 190 };
     expect(validate(large).join(" ")).toContain("173 mm");
     expect(validate({ ...large, calibration: false })).toEqual([]);
     expect(validate({ ...large, paper: "a3" })).toEqual([]);
     expect(validate({ ...large, paper: "custom" })).toEqual([]);
     expect(pageSize({ ...large, paper: "custom" })).toEqual([210, 314]);
     const sheet = buildSheet({ ...large, paper: "custom" });
-    expect(sheet.shapes.find((s) => s.type === "circle")).toMatchObject({
-      r: 95,
-    });
+    if (borderShape === "circle")
+      expect(sheet.shapes.find((s) => s.type === "circle")).toMatchObject({ r: 95 });
+    else
+      expect(sheet.shapes.find((s) => s.type === "rect")).toMatchObject({ x: 10, y: 38, w: 190, h: 190 });
   });
 
   it("preserves absolute calibration dimensions and removes targets when disabled", () => {
@@ -354,16 +383,18 @@ describe("vector exports", () => {
 
   it.each(["bahtinov", "carey"] as const)("exports %s PDF with exact paper dimensions and no embedded raster mask", async (maskType) => {
     for (const paper of ["a4", "letter", "custom"] as const) {
-      const sheet = buildSheet({ ...defaults, paper, maskType });
-      const blob = await toPdf(sheet),
-        content = await blob.text();
-      expect(content.startsWith("%PDF-")).toBe(true);
-      const box = content.match(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/);
-      expect(box).not.toBeNull();
-      expect((Number(box![1]) * 25.4) / 72).toBeCloseTo(sheet.width, 5);
-      expect((Number(box![2]) * 25.4) / 72).toBeCloseTo(sheet.height, 5);
-      expect(content).toContain("/PrintScaling /None");
-      expect(content).not.toContain("/Subtype /Image");
+      for (const borderShape of ["circle", "square"] as const) {
+        const sheet = buildSheet({ ...defaults, paper, maskType, borderShape });
+        const blob = await toPdf(sheet),
+          content = await blob.text();
+        expect(content.startsWith("%PDF-")).toBe(true);
+        const box = content.match(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/);
+        expect(box).not.toBeNull();
+        expect((Number(box![1]) * 25.4) / 72).toBeCloseTo(sheet.width, 5);
+        expect((Number(box![2]) * 25.4) / 72).toBeCloseTo(sheet.height, 5);
+        expect(content).toContain("/PrintScaling /None");
+        expect(content).not.toContain("/Subtype /Image");
+      }
     }
   });
 });

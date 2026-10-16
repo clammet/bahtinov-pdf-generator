@@ -14,6 +14,8 @@ export interface Settings {
   minimumWidth: number;
   fabrication: "cutout" | "film";
   patternDiameter: number;
+  borderShape: "circle" | "square";
+  // Circle diameter or square side length; retain the key for saved settings.
   outerDiameter: number;
   factor: number;
   pitchMode: "auto" | "manual";
@@ -41,6 +43,7 @@ export const defaults: Settings = {
   minimumWidth: printerMinimumWidth(600),
   fabrication: "cutout",
   patternDiameter: 100,
+  borderShape: "circle",
   outerDiameter: 110,
   factor: 180,
   pitchMode: "auto",
@@ -153,7 +156,7 @@ export function validate(s: Settings): string[] {
     ["pixelSize", "Camera pixel size", 0.1, 100],
     ["minimumWidth", "Minimum slit/bar width", 0.001, 20],
     ["patternDiameter", "Pattern diameter", 5, 1000],
-    ["outerDiameter", "Outside diameter", 6, 1100],
+    ["outerDiameter", s.borderShape === "square" ? "Outside side length" : "Outside diameter", 6, 1100],
     ["factor", "Spacing factor", 50, 1000],
     ["manualPitch", "Manual pitch", 0.05, 100],
     ["openPercent", "Open fraction", 10, 90],
@@ -180,6 +183,8 @@ export function validate(s: Settings): string[] {
   }
   if (!Object.hasOwn(maskNames, s.maskType))
     errors.push("Choose a valid mask type.");
+  if (!["circle", "square"].includes(s.borderShape))
+    errors.push("Choose a valid border shape.");
   if (!["a4", "a3", "letter", "custom"].includes(s.paper))
     errors.push("Choose a valid paper size.");
   if (!["auto", "manual"].includes(s.pitchMode))
@@ -199,7 +204,7 @@ export function validate(s: Settings): string[] {
     errors.push("Carey left and right angles must differ to produce two distinct X patterns.");
   if (s.outerDiameter <= s.patternDiameter)
     errors.push(
-      "Outside diameter must be larger than the pattern diameter to leave a border.",
+      `${s.borderShape === "square" ? "Outside side length" : "Outside diameter"} must be larger than the pattern diameter to leave a border.`,
     );
   if (s.obstruction >= s.patternDiameter - 2 * supportWidthFor(s))
     errors.push(
@@ -237,7 +242,7 @@ export function validate(s: Settings): string[] {
   );
   if (s.outerDiameter > maxDiameter + 1e-8)
     errors.push(
-      `This sheet fits an outside diameter up to ${fmt(maxDiameter, 1)} mm. Choose larger paper, a custom sheet, or turn off calibration. The mask will not be scaled.`,
+      `This sheet fits an outside ${s.borderShape === "square" ? "side length" : "diameter"} up to ${fmt(maxDiameter, 1)} mm. Choose larger paper, a custom sheet, or turn off calibration. The mask will not be scaled.`,
     );
   return errors;
 }
@@ -377,7 +382,7 @@ export function buildSheet(s: Settings): Sheet {
     m,
     m + 10,
     2.6,
-    `${fmt(s.focalLength)} mm  |  Pupil ${fmt(apertureFor(s))} mm  |  Pattern ${fmt(s.patternDiameter)} mm  |  Outside ${fmt(s.outerDiameter)} mm`,
+    `${fmt(s.focalLength)} mm  |  Pupil ${fmt(apertureFor(s))} mm  |  Pattern ${fmt(s.patternDiameter)} mm  |  ${s.borderShape === "square" ? "Square side" : "Circle diameter"} ${fmt(s.outerDiameter)} mm`,
   );
   text(
     m,
@@ -396,7 +401,9 @@ export function buildSheet(s: Settings): Sheet {
   const bottom = height - m - (s.calibration ? CALIBRATION : FOOTER);
   const cx = width / 2,
     cy = (m + HEADER + bottom) / 2;
-  shapes.push({
+  if (s.borderShape === "square")
+    rect(cx - s.outerDiameter / 2, cy - s.outerDiameter / 2, s.outerDiameter, s.outerDiameter);
+  else shapes.push({
     type: "circle",
     x: cx,
     y: cy,

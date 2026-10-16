@@ -86,8 +86,9 @@ app.innerHTML = `
           <div class="spaced" id="optical-aperture-field" hidden>${input("opticalAperture", "Clear optical aperture", "mm", 1, 1000)}</div>
           <div class="aperture-row"><span id="aperture-label">Estimated entrance pupil</span><strong id="aperture"></strong></div>
           <p class="helper aperture-help">Optical estimate only. This is not the front-element diameter or a suggested mask size.</p>
+          <label class="field spaced" for="borderShape"><span>Outer border shape</span><select id="borderShape" name="borderShape" aria-describedby="border-help"><option value="circle">Circular</option><option value="square">Square</option></select></label>
           <div class="field-grid">${input("patternDiameter", "Pattern diameter", "mm", 5, 1000)}${input("outerDiameter", "Outside diameter", "mm", 6, 1100)}</div>
-          <p class="helper">Pattern = slotted area covering the usable opening at the mounting position. Outside diameter = physical fit, including the border. Initial dimensions are examples; measure your lens hood, holder or telescope. Optical settings never resize the mask.</p>
+          <p class="helper" id="border-help">The slotted pattern stays circular. Outside size includes the opaque border; square size is measured along a side. Measure your hood, holder or telescope and cover gaps that could admit light around the mask. Clear film outside the printed border still transmits light. Optical settings never resize the mask.</p>
           <p class="helper" id="wide-angle-help" hidden>Wide-angle lenses: use a centred star; off-axis rays can miss one or more grating regions. Mount ahead of the hood with clearance from protruding glass. The pupil estimate does not model the hood, pupil position or off-axis vignetting.</p>
         </section>
         <section class="control-section"><h2>Camera <span class="optional">optional</span></h2>
@@ -121,7 +122,7 @@ app.innerHTML = `
       </form>
       <section class="preview-panel" aria-labelledby="preview-title">
         <div class="preview-toolbar"><div><h2 id="preview-title">Preview</h2><span id="page-size"></span></div><div class="zoom-control" aria-label="Preview zoom"><button id="zoom-out" type="button" aria-label="Zoom out"><span data-lucide="minus"></span></button><output id="zoom-label">Fit</output><button id="zoom-in" type="button" aria-label="Zoom in"><span data-lucide="plus"></span></button></div></div>
-        <div class="metrics" aria-live="polite"><div><span>Pattern pitch</span><strong id="pitch-value">—</strong></div><div><span>Slit / bar</span><strong id="slit-value">—</strong></div><div><span>Border width</span><strong id="border-value">—</strong></div></div>
+        <div class="metrics" aria-live="polite"><div><span>Pattern pitch</span><strong id="pitch-value">—</strong></div><div><span>Slit / bar</span><strong id="slit-value">—</strong></div><div><span id="border-label">Border width</span><strong id="border-value">—</strong></div></div>
         <p id="diffraction-value" class="optical-result" aria-live="polite" hidden></p>
         <div id="messages" aria-live="polite"></div>
         <div class="preview-stage" id="preview-stage"><div class="paper" id="preview"></div></div>
@@ -353,6 +354,10 @@ function setButtons() {
 }
 function update() {
   settings = readSettings();
+  const square = settings.borderShape === "square";
+  form.querySelector('label[for="outerDiameter"] > span')!.textContent = square
+    ? "Outside side length" : "Outside diameter";
+  el("border-label").textContent = square ? "Minimum border width" : "Border width";
   const carey = settings.maskType === "carey";
   const example = maskExamples[settings.maskType];
   // Preserve the originals; only the inline thumbnail is scaled by CSS.
@@ -516,7 +521,7 @@ function changeZoom(delta: number) {
 el("zoom-in").addEventListener("click", () => changeZoom(0.5));
 el("zoom-out").addEventListener("click", () => changeZoom(-0.5));
 function filename() {
-  return `${settings.maskType}-${fmt(settings.focalLength)}mm-${fmt(settings.outerDiameter)}mm`;
+  return `${settings.maskType}-${fmt(settings.focalLength)}mm-${fmt(settings.outerDiameter)}mm-${settings.borderShape}`;
 }
 el("svg-button").addEventListener("click", () => {
   if (!sheet) return;

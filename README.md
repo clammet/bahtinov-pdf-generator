@@ -24,7 +24,7 @@ pnpm preview  # Serve the production build locally
 ## Generate a mask
 
 1. Choose **Bahtinov** or **Carey** with the mask selector at the top of the page. The angle controls and focusing guidance follow the selected mask; switching preserves both sets of angle settings. Enter the actual focal length of the optical setup, including reducers or Barlows. Sensor crop factor does not change focal length. Estimate the entrance pupil using `focal length / f-number`, or select **Known aperture / telescope override** to enter a clear aperture directly without needing an f-number. The estimate is not the front-element diameter or a recommended physical mask size. Optical settings never resize the mask.
-2. Set the slotted **pattern diameter** to cover the usable opening at the mounting position and the **outside diameter** for physical fit, including the solid outer ring. Radial border width is `(outside diameter - pattern diameter) / 2`. Initial dimensions are examples, not a verified lens fit. Measure your hood, holder or telescope before fabrication.
+2. Choose a **circular** or **square outer border**. The slotted **pattern diameter** stays circular. Set the **outside diameter** (circle) or **outside side length** (square) for physical fit, including the opaque surround. Border width is `(outside size - pattern diameter) / 2`; for a square this is the minimum width at the middle of each side, with more material in the corners. Initial dimensions are examples, not a verified lens fit. Measure your hood, holder or telescope before fabrication and cover gaps that could admit light around the mask. Clear transparency film outside the printed border still transmits light.
 3. Optionally select a camera preset or enter a custom pixel size to predict diffraction spacing. Choose automatic or manual pitch. Under **Print & fabrication**, select a printer preset or enter a minimum slit/bar width. Advanced pattern controls set open fraction, slit angle, supports, and central obstruction.
 4. Choose A4, US Letter, A3, or a custom sheet sized to the mask. Calibration is optional. A mask that does not fit blocks export: it is never silently resized. Custom paper may require a large-format printer or external PDF poster tiling at 100%; the app does not tile pages.
 5. Download a vector PDF or a full-page SVG. SVG dimensions explicitly use millimetres. The preview fits the screen and is not a physical-size reference.
@@ -89,7 +89,7 @@ Preset sources:
 - [Nikon D750](https://nij.nikon.com/products/lineup/slr/d750/spec.html): approximately 5.97 µm, calculated from 35.9 mm / 6016 pixels.
 - [ZWO ASI533 MC/MM Pro](https://us.zwoastro.com/collections/dso_cooled_cameras/products/asi533-pro-series): 3.76 µm.
 
-The period convention and typical angle can be checked against [Satoru Takagi's Bahtinov generator](https://github.com/satakagi/tribahtinovWebApps/blob/master/Bahtinov.html). No implementation code was copied. The geometry here is independently implemented using convex polygon clipping. Circular slit boundaries are approximated with a maximum radial deviation below 0.005 mm; the outer edge is a vector circle.
+The period convention and typical angle can be checked against [Satoru Takagi's Bahtinov generator](https://github.com/satakagi/tribahtinovWebApps/blob/master/Bahtinov.html). No implementation code was copied. The geometry here is independently implemented using convex polygon clipping. Circular slit boundaries are approximated with a maximum radial deviation below 0.005 mm; the outer edge is a vector circle or square. Border shape is preserved in saved settings, profiles and shared links; older settings without a shape use the circular default.
 
 The SVG preview and both exports share one scene in millimetres. PDF content consists of vector paths, shapes, and text, rather than a raster screenshot. Printer presets set physical feature limits; DPI also controls printability advice, never export resolution. Finite ranges and a 2,000-period limit bound generation cost.
 
@@ -104,7 +104,7 @@ Print the **downloaded PDF** using **Actual size / 100%**, with **Fit to page di
 
 Measure the ruler endpoints and square line centres. Check that fine lines remain separated in both directions. Print dimensions and detail do not guarantee optical performance: try the mask on a bright star and verify that the Bahtinov central diffraction spike crosses the other two, or that the Carey pair of X patterns is symmetrical, at focus.
 
-Black means opaque material to retain; white means openings. Printed paper is a cutting template. A transparency requires sufficiently opaque black printing. Remove the mask after focusing. SVG is a print sheet with white openings layered over a black disk, not a cutter-ready compound path; prepare boolean cut paths in your cutter software before fabrication.
+Black means opaque material to retain; white means openings. Printed paper is a cutting template. A transparency requires sufficiently opaque black printing. Remove the mask after focusing. SVG is a print sheet with white openings layered over a black disk or square, not a cutter-ready compound path; prepare boolean cut paths in your cutter software before fabrication.
 
 ## GitHub Pages
 
