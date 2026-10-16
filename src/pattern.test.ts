@@ -467,7 +467,7 @@ describe("multiple patterns on a physical sheet", () => {
       s.type === "rect" && s.w === 111 ? [{ x: s.x, y: s.y, size: s.w }] : []);
     expect(bounds).toHaveLength(2);
     expect(bounds[0].x).toBe(bounds[1].x);
-    expect(bounds[0].y).toBe(13);
+    expect(bounds[0].y).toBe(10);
     expect(bounds[1].y - bounds[0].y).toBe(114);
     const calibrationTop = sheet.shapes.find((s) => s.type === "line")!;
     expect(calibrationTop.y).toBeGreaterThan(bounds[1].y + bounds[1].size);

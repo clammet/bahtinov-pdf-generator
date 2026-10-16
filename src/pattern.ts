@@ -131,7 +131,6 @@ export const isShortLens = (s: Settings) =>
 // Focal length and pitch are mm; wavelength and camera pixels are micrometres.
 export const diffractionOffsetFor = (s: Settings): number | null =>
   s.camera === "none" ? null : (s.focalLength * 0.55) / (pitchFor(s) * s.pixelSize);
-const LABEL_SPACE = 3;
 const GAP = 3;
 const FOOTER_SIZE = 2.1;
 const FOOTER_LEADING = 2.4;
@@ -211,7 +210,7 @@ export function pageSize(input: Settings | Settings[]): [number, number] {
     Math.sqrt(patterns.reduce((sum, p) => sum + p.outerDiameter ** 2, 0)) + GAP * (Math.ceil(Math.sqrt(patterns.length)) - 1));
   const width = Math.ceil(usableWidth + 2 * s.margin);
   return [width, Math.ceil(packPatterns(patterns, width - 2 * s.margin).height +
-    2 * s.margin + LABEL_SPACE + calibrationHeight(patterns) + footerHeight(patterns, width - 2 * s.margin))];
+    2 * s.margin + calibrationHeight(patterns) + footerHeight(patterns, width - 2 * s.margin))];
 }
 export function validate(s: Settings, checkPage = true): string[] {
   const errors: string[] = [];
@@ -308,7 +307,7 @@ function validatePage(patterns: Settings[]): string[] {
     return ["Reduce the page margin to leave at least 160 mm for the sheet labels and calibration targets."];
   if (width > 5000 || height > 5000)
     return ["This sheet exceeds the 5,000 mm export limit. Use fewer or smaller patterns."];
-  const availableHeight = height - 2 * s.margin - LABEL_SPACE - calibrationHeight(patterns) - footerHeight(patterns, usableWidth);
+  const availableHeight = height - 2 * s.margin - calibrationHeight(patterns) - footerHeight(patterns, usableWidth);
   const packed = packPatterns(patterns, usableWidth);
   if (patterns.some((p) => p.outerDiameter > usableWidth + 1e-8) || packed.height > availableHeight + 1e-8)
     return ["The patterns do not fit on this sheet at actual size, including calibration and footer settings. Choose larger paper, a custom sheet, remove a pattern, or turn off calibration. The masks will not be scaled."];
@@ -456,7 +455,7 @@ export function buildSheet(input: Settings | Settings[]): Sheet {
   ) => shapes.push({ type: "rect", x, y, w, h, fill, stroke, weight: 0.15 });
   const bottom = height - m - calibration - footer;
   const packed = packPatterns(patterns, width - 2 * m);
-  const top = m + LABEL_SPACE;
+  const top = m;
   for (const item of packed.placements) {
     const pattern = patterns[item.index];
     const cx = m + item.x + item.size / 2, cy = top + item.y + item.size / 2;
@@ -468,7 +467,6 @@ export function buildSheet(input: Settings | Settings[]): Sheet {
       shapes.push({ type: "polygon", points: points.map((p) => ({ x: p.x + cx, y: p.y + cy })), fill: "#ffffff" });
     if (pattern.obstruction > 0)
       shapes.push({ type: "circle", x: cx, y: cy, r: pattern.obstruction / 2, fill: "#000000" });
-    text(cx - item.size / 2, cy - item.size / 2 - 0.6, 1.8, `${item.index + 1}. ${maskNames[pattern.maskType]}`);
   }
   if (s.calibration) {
     const y = bottom;
