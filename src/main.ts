@@ -26,6 +26,8 @@ import {
   isShortLens,
   maskNames,
   validate,
+  validatePatterns,
+  MAX_PATTERNS,
   warnings,
 } from "./pattern";
 import type { Settings, Sheet } from "./pattern";
@@ -33,7 +35,7 @@ import { download, toPdf, toSvg } from "./export";
 import { cameraPresets, lensPresets, printerPresets, printerMinimumWidth } from "./presets";
 import { anglePreview, setupHoverPreview } from "./angle-preview";
 import { loadProfiles, loadSettings, saveProfile, saveSettings } from "./settings-storage";
-import type { SavedSettings } from "./settings-storage";
+import type { RawSettings, SavedSettings } from "./settings-storage";
 import { parseSettingsUrl, settingsUrl, withoutSettingsUrl } from "./settings-url";
 
 const maskExamples = {
@@ -61,6 +63,11 @@ app.innerHTML = `
   </div></header>
   <main>
     ${notice("settings-status")}
+    <section class="pattern-manager" aria-label="Patterns on this sheet">
+      <label class="field" for="pattern-selection"><span>Editing pattern</span><select id="pattern-selection"></select></label>
+      <div class="settings-actions"><button type="button" id="add-pattern" class="secondary">Add pattern</button><button type="button" id="duplicate-pattern" class="secondary">Duplicate</button><button type="button" id="remove-pattern" class="secondary">Remove</button></div>
+      <p class="helper">Each pattern has its own optics, dimensions and fabrication settings. Patterns are arranged at actual size. Paper, margin and calibration apply to the whole sheet.</p>
+    </section>
     <section class="mask-picker" aria-label="Mask selection">
       <label class="field" for="maskType"><span>Mask type</span><select id="maskType" name="maskType" form="controls" aria-describedby="mask-help"><option value="bahtinov">Bahtinov mask</option><option value="carey">Carey mask</option></select></label>
       <p class="helper" id="mask-help"></p>
@@ -76,7 +83,7 @@ app.innerHTML = `
     </section>
     <div class="workspace">
       <form id="controls" novalidate>
-        <section class="control-section"><div class="section-title"><h2>Optics</h2><button class="text-button" id="reset-settings" type="button">Reset</button></div>
+        <section class="control-section"><div class="section-title"><h2>Optics</h2><button class="text-button" id="reset-settings" type="button">Reset pattern</button></div>
           <label class="field" for="lens-preset"><span>Lens starting point</span><select id="lens-preset" aria-describedby="lens-help"><option value="custom">Custom lens / telescope</option>${lensPresets.map((preset) => `<option value="${preset.id}">${preset.label}</option>`).join("")}</select></label>
           <p class="helper" id="lens-help" hidden></p>
           <div class="spaced">${input("focalLength", "Focal length", "mm", 1, 20000)}</div>
@@ -116,7 +123,8 @@ app.innerHTML = `
           <label class="field" for="printer-preset"><span>Printer preset</span><select id="printer-preset">${printerPresets.map((dpi) => `<option value="${dpi}" ${dpi === defaults.dpi ? "selected" : ""}>${dpi} DPI · ${fmt(printerMinimumWidth(dpi), 4)} mm minimum</option>`).join("")}<option value="custom">Custom / cutting template</option></select></label>
           <div class="field-grid spaced">${input("minimumWidth", "Minimum slit/bar width", "mm", 0.001, 20)}${input("dpi", "Printer resolution", "DPI", 72, 9600)}</div>
           <p class="helper">Presets allow at least 3 printer dots per slit/bar; 600 DPI is the default starting estimate. Choose the printer's real resolution (lower axis if unequal), not image PPI or an interpolated setting. Presets do not establish cutting strength or optical usefulness. Check both actual-pitch calibration samples; increase the width if gaps merge or bars are fragile. For cutting, enter your reliable minimum width. Slit ends at the rim can be narrower.</p>
-          <div class="field-grid spaced"><label class="field" for="paper"><span>Paper size</span><select id="paper" name="paper"><option value="a4">A4 · 210 × 297 mm</option><option value="letter">US Letter</option><option value="a3">A3 · 297 × 420 mm</option><option value="custom">Custom · fits mask</option></select></label>${input("margin", "Page margin", "mm", 5, 40)}</div>
+        </section>
+        <section class="control-section"><h2>Sheet settings <span class="optional">all patterns</span></h2><div class="field-grid"><label class="field" for="paper"><span>Paper size</span><select id="paper" name="paper"><option value="a4">A4 · 210 × 297 mm</option><option value="letter">US Letter</option><option value="a3">A3 · 297 × 420 mm</option><option value="custom">Custom · fits patterns</option></select></label>${input("margin", "Page margin", "mm", 5, 40)}</div>
           <label class="check-row"><input type="checkbox" id="calibration" name="calibration" checked/><span><strong>Print calibration</strong></span></label>
         </section>
       </form>
@@ -206,28 +214,57 @@ const settingFields = Array.from(form.elements).filter(
   (field): field is HTMLInputElement | HTMLSelectElement =>
     field instanceof HTMLInputElement || field instanceof HTMLSelectElement,
 );
-function restoreSettings(values: SavedSettings) {
+let patterns: RawSettings[] = [{}];
+let activePattern = 0;
+const pageFields = ["paper", "margin", "calibration"] as const;
+function restoreFields(values: SavedSettings) {
   form.reset();
   for (const field of settingFields) {
     const value = values[field.id];
     if (field instanceof HTMLInputElement && field.type === "checkbox") {
       if (typeof value === "boolean") field.checked = value;
     } else if (typeof value === "string") {
-      // Removed or invalid options fall back to the current default selection.
       if (field instanceof HTMLSelectElement &&
           !Array.from(field.options).some((option) => option.value === value)) continue;
       field.value = value;
     }
   }
 }
+function readFields(): RawSettings {
+  return Object.fromEntries(settingFields.map((field) => [field.id,
+    field instanceof HTMLInputElement && field.type === "checkbox" ? field.checked : field.value]));
+}
+function capturePattern() {
+  const values = readFields();
+  patterns[activePattern] = values;
+  for (const pattern of patterns)
+    for (const key of pageFields) pattern[key] = values[key];
+}
+function restoreSettings(values: SavedSettings) {
+  const saved = Array.isArray(values.patterns) ? values.patterns : [values];
+  patterns = saved.map((value) => {
+    restoreFields(value);
+    return readFields();
+  });
+  const requested = Number(values.activePattern ?? 0);
+  activePattern = Number.isInteger(requested) && requested >= 0 && requested < patterns.length ? requested : 0;
+  // The first pattern owns the shared page settings, including legacy saves.
+  for (const pattern of patterns)
+    for (const key of pageFields) pattern[key] = patterns[0][key];
+  restoreFields(patterns[activePattern]);
+}
 function snapshotSettings(): SavedSettings {
-  const values: SavedSettings = {};
-  for (const field of settingFields)
-    values[field.id] = field instanceof HTMLInputElement && field.type === "checkbox"
-      ? field.checked
-      : field.value;
-  // Keep raw values so blank/invalid edits and preset selections survive reloads.
-  return values;
+  capturePattern();
+  return { ...patterns[activePattern], patterns: patterns.map((pattern) => ({ ...pattern })), activePattern: String(activePattern) };
+}
+function updatePatternSelector() {
+  const select = el<HTMLSelectElement>("pattern-selection");
+  select.replaceChildren(...patterns.map((pattern, index) =>
+    new Option(`${index + 1}. ${maskNames[pattern.maskType as Settings["maskType"]]} · ${pattern.focalLength} mm · ${pattern.outerDiameter} mm ${pattern.borderShape === "square" ? "square" : "circle"}`, String(index))));
+  select.value = String(activePattern);
+  el<HTMLButtonElement>("remove-pattern").disabled = patterns.length === 1;
+  for (const id of ["add-pattern", "duplicate-pattern"])
+    el<HTMLButtonElement>(id).disabled = patterns.length >= MAX_PATTERNS;
 }
 function persistSettings() {
   saveSettings(snapshotSettings());
@@ -332,18 +369,10 @@ let sheet: Sheet | undefined;
 let settings = { ...defaults };
 let zoom = 1;
 let exporting = false;
-function readSettings(): Settings {
+function readSettings(raw: RawSettings = readFields()): Settings {
   const values = { ...defaults };
   for (const key of Object.keys(defaults) as (keyof Settings)[]) {
-    const field = form.elements.namedItem(key) as
-      | HTMLInputElement
-      | HTMLSelectElement;
-    const value =
-      typeof defaults[key] === "number"
-        ? Number(field.value || NaN)
-        : typeof defaults[key] === "boolean"
-          ? (field as HTMLInputElement).checked
-          : field.value;
+    const value = typeof defaults[key] === "number" ? Number(raw[key] || NaN) : raw[key];
     Object.assign(values, { [key]: value });
   }
   return values;
@@ -353,7 +382,10 @@ function setButtons() {
   el<HTMLButtonElement>("svg-button").disabled = !sheet || exporting;
 }
 function update() {
+  capturePattern();
+  updatePatternSelector();
   settings = readSettings();
+  const allSettings = patterns.map((pattern) => readSettings(pattern));
   const square = settings.borderShape === "square";
   form.querySelector('label[for="outerDiameter"] > span')!.textContent = square
     ? "Outside side length" : "Outside diameter";
@@ -425,18 +457,19 @@ function update() {
     ? `${fmt(aperture, 2)} mm`
     : "—";
   const border = (settings.outerDiameter - settings.patternDiameter) / 2;
-  const errors = validate(settings);
-  el("reference-help").hidden = !automatic || errors.length > 0;
-  el("reference-help").textContent = !automatic || errors.length > 0 ? "" :
+  const errors = validatePatterns(allSettings);
+  const activeErrors = validate(settings, false);
+  el("reference-help").hidden = !automatic || activeErrors.length > 0;
+  el("reference-help").textContent = !automatic || activeErrors.length > 0 ? "" :
     `Before fabrication limits: ${fmt(settings.focalLength / settings.factor, 4)} mm pitch; smallest slit/bar ${fmt(referenceFeatureFor(settings), 4)} mm. Three dots across that feature would require at least ${referenceDpiFor(settings).toLocaleString()} DPI in both axes. This is a resolution estimate, not a promise of print or focus quality.`;
-  const offset = errors.length ? null : diffractionOffsetFor(settings);
+  const offset = activeErrors.length ? null : diffractionOffsetFor(settings);
   el("diffraction-value").hidden = offset === null;
   el("diffraction-value").textContent = offset === null
     ? ""
     : `First-order diffraction offset: ≈ ${fmt(offset, 1)} sensor pixels from the star centre at 550 nm. Estimate, not full spike length; live-view scaling and filters affect appearance.`;
   const messages = el("messages");
   messages.replaceChildren();
-  for (const message of errors.length ? errors : warnings(settings)) {
+  for (const message of errors.length ? errors : allSettings.flatMap((pattern, index) => warnings(pattern).map((warning) => `Pattern ${index + 1}: ${warning}`))) {
     const p = document.createElement("p");
     p.className = errors.length ? "error" : "warning";
     p.textContent = message;
@@ -452,10 +485,10 @@ function update() {
     for (const id of ["pitch-value", "slit-value", "border-value"])
       el(id).textContent = "—";
   } else {
-    sheet = buildSheet(settings);
+    sheet = buildSheet(allSettings);
     el("preview").classList.remove("invalid");
     el("preview").innerHTML = toSvg(sheet);
-    const [w, h] = pageSize(settings),
+    const [w, h] = pageSize(allSettings),
       pitch = pitchFor(settings),
       slit = (pitch * settings.openPercent) / 100;
     el("page-size").textContent =
@@ -504,8 +537,46 @@ form.addEventListener("input", (event) => {
   update();
   persistSettings();
 });
+el("pattern-selection").addEventListener("change", () => {
+  capturePattern();
+  activePattern = Number(el<HTMLSelectElement>("pattern-selection").value);
+  restoreFields(patterns[activePattern]);
+  update();
+  persistSettings();
+});
+for (const id of ["add-pattern", "duplicate-pattern"]) {
+  el(id).addEventListener("click", () => {
+    if (patterns.length >= MAX_PATTERNS) return;
+    capturePattern();
+    const previous = patterns[activePattern];
+    if (id === "add-pattern") {
+      restoreFields({});
+      for (const key of pageFields) {
+        const field = el<HTMLInputElement | HTMLSelectElement>(key);
+        if (field instanceof HTMLInputElement && field.type === "checkbox") field.checked = previous[key] as boolean;
+        else field.value = previous[key] as string;
+      }
+    }
+    patterns.push(id === "duplicate-pattern" ? { ...previous } : readFields());
+    activePattern = patterns.length - 1;
+    restoreFields(patterns[activePattern]);
+    update();
+    persistSettings();
+  });
+}
+el("remove-pattern").addEventListener("click", () => {
+  if (patterns.length === 1) return;
+  capturePattern();
+  patterns.splice(activePattern, 1);
+  activePattern = Math.min(activePattern, patterns.length - 1);
+  restoreFields(patterns[activePattern]);
+  update();
+  persistSettings();
+});
 el("reset-settings").addEventListener("click", () => {
-  form.reset();
+  capturePattern();
+  const page = Object.fromEntries(pageFields.map((key) => [key, patterns[activePattern][key]]));
+  restoreFields(page);
   update();
   persistSettings();
 });
@@ -521,6 +592,7 @@ function changeZoom(delta: number) {
 el("zoom-in").addEventListener("click", () => changeZoom(0.5));
 el("zoom-out").addEventListener("click", () => changeZoom(-0.5));
 function filename() {
+  if (patterns.length > 1) return `focusing-masks-${patterns.length}-patterns`;
   return `${settings.maskType}-${fmt(settings.focalLength)}mm-${fmt(settings.outerDiameter)}mm-${settings.borderShape}`;
 }
 el("svg-button").addEventListener("click", () => {

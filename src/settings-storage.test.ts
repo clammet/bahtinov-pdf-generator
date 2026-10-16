@@ -1,3 +1,4 @@
+import type { SavedSettings } from "./settings-storage";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadProfiles, loadSettings, saveProfile, saveSettings } from "./settings-storage";
 
@@ -14,13 +15,18 @@ describe("settings storage", () => {
     expect(loadSettings()).toEqual({});
     expect(setItem).not.toHaveBeenCalled();
 
-    const values = {
+    const values: SavedSettings = {
       maskType: "carey",
       focalLength: "",
       angle: "25",
       calibration: false,
       "lens-preset": "sigma-14",
       "printer-preset": "1200",
+      activePattern: "1",
+      patterns: [
+        { maskType: "bahtinov", focalLength: "400", calibration: false },
+        { maskType: "carey", focalLength: "14", angle: "", "lens-preset": "sigma-14" },
+      ],
     };
     saveSettings(values);
     expect(loadSettings()).toEqual(values);
@@ -28,6 +34,7 @@ describe("settings storage", () => {
 
     saveSettings({ ...values, focalLength: "14" });
     expect(loadSettings().focalLength).toBe("14");
+    expect(loadSettings().patterns).toEqual(values.patterns);
   });
 
   it("ignores malformed stored data and unsupported value types", () => {
@@ -42,6 +49,10 @@ describe("settings storage", () => {
       camera: null, paper: { value: "a4" },
     }));
     expect(loadSettings()).toEqual({ focalLength: "400", calibration: false });
+    for (const patterns of [[], [null], [{ focalLength: 400 }], Array(13).fill({})]) {
+      getItem.mockReturnValue(JSON.stringify({ focalLength: "400", patterns }));
+      expect(loadSettings()).toEqual({ focalLength: "400" });
+    }
   });
 
   it("handles storage access and write failures without interrupting the app", () => {
@@ -77,6 +88,17 @@ describe("named settings profiles", () => {
       { name: "Wide angle", settings: { focalLength: "14", "lens-preset": "sigma-14" } },
     ]);
     expect(loadSettings()).toEqual({ focalLength: "800" });
+  });
+
+  it("restores every pattern and the active selection from a named profile", () => {
+    useStorage();
+    const settings: SavedSettings = { activePattern: "1", patterns: [
+      { maskType: "bahtinov", focalLength: "400", angle: "20", calibration: false },
+      { maskType: "carey", focalLength: "14", angle: "", "lens-preset": "sigma-14" },
+    ] };
+    expect(saveProfile("Two patterns", settings)).toBe("saved");
+    saveSettings({ focalLength: "800" });
+    expect(loadProfiles()[0].settings).toEqual(settings);
   });
 
   it("requires explicit replacement for an existing name", () => {

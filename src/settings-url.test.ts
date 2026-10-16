@@ -1,3 +1,4 @@
+import type { SavedSettings } from "./settings-storage";
 import { describe, expect, it } from "vitest";
 import { parseSettingsUrl, settingsUrl, withoutSettingsUrl } from "./settings-url";
 
@@ -5,10 +6,15 @@ describe("settings links", () => {
   const base = "https://example.com/masks/?source=shared";
 
   it("round-trips every value type, empty edits and encoded characters", () => {
-    const settings = {
+    const settings: SavedSettings = {
       maskType: "carey", focalLength: "14", fStop: "1.8", angle: "",
       calibration: false, "lens-preset": "sigma-14", "printer-preset": "custom",
       custom: "space + & = # % / µm",
+      activePattern: "1",
+      patterns: [
+        { maskType: "bahtinov", focalLength: "400", calibration: false },
+        { maskType: "carey", focalLength: "14", "lens-preset": "sigma-14" },
+      ],
     };
     const url = settingsUrl(`${base}#previous-section`, settings);
     expect(new URL(url).pathname).toBe("/masks/");
@@ -19,7 +25,7 @@ describe("settings links", () => {
   it("distinguishes absent links from damaged or unsupported payloads", () => {
     expect(parseSettingsUrl(base)).toEqual({ status: "absent" });
     expect(parseSettingsUrl(`${base}#section`)).toEqual({ status: "absent" });
-    for (const data of ["", "{broken", "null", "[]", "42", '{"dpi":600}', '{"paper":{}}']) {
+    for (const data of ["", "{broken", "null", "[]", "42", '{"dpi":600}', '{"paper":{}}', '{"patterns":[]}', '{"patterns":[{"dpi":600}]}', '{"other":[{}]}']) {
       const hash = new URLSearchParams({ settings: data });
       expect(parseSettingsUrl(`${base}#${hash}`)).toEqual({ status: "invalid" });
     }

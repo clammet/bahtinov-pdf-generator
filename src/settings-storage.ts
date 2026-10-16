@@ -1,13 +1,22 @@
+import { MAX_PATTERNS } from "./pattern";
+
 const storageKey = "focusing-mask-generator.settings.v1";
 const profilesKey = "focusing-mask-generator.profiles.v1";
 
-export type SavedSettings = Record<string, string | boolean>;
+export type RawSettings = Record<string, string | boolean>;
+export type SavedSettings = Record<string, string | boolean | RawSettings[]>;
 
+function isRawSettings(value: unknown): value is RawSettings {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    Object.values(value).every((entry) => typeof entry === "string" || typeof entry === "boolean");
+}
+function isSettingEntry(key: string, value: unknown): boolean {
+  return typeof value === "string" || typeof value === "boolean" ||
+    (key === "patterns" && Array.isArray(value) && value.length >= 1 && value.length <= MAX_PATTERNS && value.every(isRawSettings));
+}
 export function isSavedSettings(value: unknown): value is SavedSettings {
   return value !== null && typeof value === "object" && !Array.isArray(value) &&
-    Object.values(value).every(
-      (entry) => typeof entry === "string" || typeof entry === "boolean",
-    );
+    Object.entries(value).every(([key, entry]) => isSettingEntry(key, entry));
 }
 
 export function loadSettings(): SavedSettings {
@@ -16,7 +25,7 @@ export function loadSettings(): SavedSettings {
     if (!stored || typeof stored !== "object" || Array.isArray(stored)) return {};
     return Object.fromEntries(
       Object.entries(stored).filter(
-        ([, value]) => typeof value === "string" || typeof value === "boolean",
+        ([key, value]) => isSettingEntry(key, value),
       ),
     );
   } catch {

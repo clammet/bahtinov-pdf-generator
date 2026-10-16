@@ -96,9 +96,11 @@ export type Shape =
       size: number;
       text: string;
       bold?: boolean;
+      font?: "courier";
     };
 export interface Sheet {
   maskType: MaskType;
+  patternCount: number;
   width: number;
   height: number;
   shapes: Shape[];
@@ -129,25 +131,89 @@ export const isShortLens = (s: Settings) =>
 // Focal length and pitch are mm; wavelength and camera pixels are micrometres.
 export const diffractionOffsetFor = (s: Settings): number | null =>
   s.camera === "none" ? null : (s.focalLength * 0.55) / (pitchFor(s) * s.pixelSize);
-const HEADER = 28;
-const FOOTER = 12;
-const CALIBRATION = 76;
-export function pageSize(s: Settings): [number, number] {
-  const sizes = {
-    a4: [210, 297],
-    letter: [215.9, 279.4],
-    a3: [297, 420],
-  } as const;
-  if (s.paper !== "custom") return [...sizes[s.paper]];
-  return [
-    Math.max(160 + 2 * s.margin, s.outerDiameter + 2 * s.margin),
-    s.outerDiameter +
-      2 * s.margin +
-      HEADER +
-      (s.calibration ? CALIBRATION : FOOTER),
-  ];
+const LABEL_SPACE = 3;
+const GAP = 3;
+const FOOTER_SIZE = 2.1;
+const FOOTER_LEADING = 2.4;
+export const MAX_PATTERNS = 12;
+const calibrationHeight = (patterns: Settings[]) =>
+  patterns[0].calibration ? 30 + 8 * (Math.ceil(patterns.length / 2) - 1) : 0;
+
+// Courier has a fixed advance of 0.6 em in both the SVG and standard PDF font.
+export function wrapMetadata(value: string, width: number): string[] {
+  const limit = Math.max(1, Math.floor(width / (FOOTER_SIZE * 0.6)));
+  const lines: string[] = [];
+  let line = "";
+  for (const word of value.split(/\s+/)) {
+    if (line && line.length + word.length + 1 > limit) {
+      lines.push(line);
+      line = "";
+    }
+    line += (line ? " " : "") + word;
+  }
+  if (line) lines.push(line);
+  return lines;
 }
-export function validate(s: Settings): string[] {
+export function patternMetadata(s: Settings, index: number): string {
+  const pitch = pitchFor(s), slit = pitch * s.openPercent / 100;
+  return [
+    `${index + 1}. ${maskNames[s.maskType]}`,
+    `Focal ${fmt(s.focalLength)} mm`,
+    `${s.apertureMode === "estimated" ? `f/${fmt(s.fStop)}; pupil` : "Aperture"} ${fmt(apertureFor(s))} mm`,
+    `Pattern ${fmt(s.patternDiameter)} mm`,
+    `${s.borderShape === "square" ? "Square side" : "Circle diameter"} ${fmt(s.outerDiameter)} mm`,
+    `Pitch ${fmt(pitch, 4)} mm (${s.pitchMode === "auto" ? `auto; factor ${fmt(s.factor)}` : "manual"})`,
+    `Slit/bar ${fmt(slit, 4)}/${fmt(pitch - slit, 4)} mm; ${fmt(s.openPercent)}% open`,
+    s.maskType === "carey"
+      ? `Included L/R ${fmt(s.careyLeftAngle)}/${fmt(s.careyRightAngle)} deg`
+      : `Angle +/-${fmt(s.angle)} deg`,
+    s.fabrication === "film" ? "Transparency; no ribs; white = clear film"
+      : `Cut-out; support ${fmt(s.bridge)} mm; white = open`,
+    `Obstruction ${fmt(s.obstruction)} mm`,
+    `Min feature ${fmt(s.minimumWidth, 4)} mm; ${fmt(s.dpi)} DPI`,
+    ...(s.camera === "none" ? [] : [`Camera ${s.camera}; pixel ${fmt(s.pixelSize)} um`]),
+    "Black = opaque / keep",
+  ].join(" | ");
+}
+const metadataLines = (patterns: Settings[], width: number) =>
+  patterns.map((s, i) => wrapMetadata(patternMetadata(s, i), width));
+const footerHeight = (patterns: Settings[], width: number) =>
+  metadataLines(patterns, width).reduce((sum, lines) => sum + lines.length * FOOTER_LEADING + 0.6, 1.5);
+
+// Place physical bounding squares in rows, largest first, without scaling masks.
+function packPatterns(patterns: Settings[], width: number) {
+  const placements = patterns.map((s, index) => ({ index, size: s.outerDiameter, x: 0, y: 0 }));
+  let x = 0, y = 0, rowHeight = 0;
+  for (const item of [...placements].sort((a, b) => b.size - a.size)) {
+    if (x > 0 && x + item.size > width + 1e-8) {
+      y += rowHeight + GAP;
+      x = 0;
+      rowHeight = 0;
+    }
+    item.x = x;
+    item.y = y;
+    x += item.size + GAP;
+    rowHeight = Math.max(rowHeight, item.size);
+  }
+  for (const rowY of new Set(placements.map((item) => item.y))) {
+    const row = placements.filter((item) => item.y === rowY);
+    const rowWidth = Math.max(...row.map((item) => item.x + item.size));
+    for (const item of row) item.x += (width - rowWidth) / 2;
+  }
+  return { placements, height: y + rowHeight };
+}
+export function pageSize(input: Settings | Settings[]): [number, number] {
+  const patterns = Array.isArray(input) ? input : [input];
+  const s = patterns[0];
+  const sizes = { a4: [210, 297], letter: [215.9, 279.4], a3: [297, 420] } as const;
+  if (s.paper !== "custom") return [...sizes[s.paper]];
+  const usableWidth = Math.max(160, ...patterns.map((p) => p.outerDiameter),
+    Math.sqrt(patterns.reduce((sum, p) => sum + p.outerDiameter ** 2, 0)) + GAP * (Math.ceil(Math.sqrt(patterns.length)) - 1));
+  const width = Math.ceil(usableWidth + 2 * s.margin);
+  return [width, Math.ceil(packPatterns(patterns, width - 2 * s.margin).height +
+    2 * s.margin + LABEL_SPACE + calibrationHeight(patterns) + footerHeight(patterns, width - 2 * s.margin))];
+}
+export function validate(s: Settings, checkPage = true): string[] {
   const errors: string[] = [];
   const ranges: [keyof Settings, string, number, number][] = [
     ["focalLength", "Focal length", 1, 20000],
@@ -231,20 +297,30 @@ export function validate(s: Settings): string[] {
     errors.push(
       "More than 2,000 periods across the mask. Increase the pitch or reduce the diameter.",
     );
-  const [width, height] = pageSize(s);
-  if (width - 2 * s.margin < 160)
-    errors.push(
-      "Reduce the page margin to leave at least 160 mm for the sheet labels and calibration targets.",
-    );
-  const maxDiameter = Math.min(
-    width - 2 * s.margin,
-    height - 2 * s.margin - HEADER - (s.calibration ? CALIBRATION : FOOTER),
-  );
-  if (s.outerDiameter > maxDiameter + 1e-8)
-    errors.push(
-      `This sheet fits an outside ${s.borderShape === "square" ? "side length" : "diameter"} up to ${fmt(maxDiameter, 1)} mm. Choose larger paper, a custom sheet, or turn off calibration. The mask will not be scaled.`,
-    );
+  if (checkPage && !errors.length) errors.push(...validatePage([s]));
   return errors;
+}
+function validatePage(patterns: Settings[]): string[] {
+  const s = patterns[0];
+  const [width, height] = pageSize(patterns);
+  const usableWidth = width - 2 * s.margin;
+  if (usableWidth < 160)
+    return ["Reduce the page margin to leave at least 160 mm for the sheet labels and calibration targets."];
+  if (width > 5000 || height > 5000)
+    return ["This sheet exceeds the 5,000 mm export limit. Use fewer or smaller patterns."];
+  const availableHeight = height - 2 * s.margin - LABEL_SPACE - calibrationHeight(patterns) - footerHeight(patterns, usableWidth);
+  const packed = packPatterns(patterns, usableWidth);
+  if (patterns.some((p) => p.outerDiameter > usableWidth + 1e-8) || packed.height > availableHeight + 1e-8)
+    return ["The patterns do not fit on this sheet at actual size, including calibration and footer settings. Choose larger paper, a custom sheet, remove a pattern, or turn off calibration. The masks will not be scaled."];
+  return [];
+}
+export function validatePatterns(patterns: Settings[]): string[] {
+  if (!patterns.length || patterns.length > MAX_PATTERNS)
+    return [`Use between 1 and ${MAX_PATTERNS} patterns per sheet.`];
+  const errors = patterns.flatMap((s, i) =>
+    validate({ ...s, paper: patterns[0].paper, margin: patterns[0].margin, calibration: patterns[0].calibration }, false)
+      .map((error) => `Pattern ${i + 1}: ${error}`));
+  return errors.length ? errors : validatePage(patterns);
 }
 export function warnings(s: Settings): string[] {
   const result: string[] = [];
@@ -352,13 +428,14 @@ export function slitPolygons(s: Settings): Point[][] {
   return polygons;
 }
 
-export function buildSheet(s: Settings): Sheet {
-  const errors = validate(s);
+export function buildSheet(input: Settings | Settings[]): Sheet {
+  const patterns = Array.isArray(input) ? input : [input];
+  const errors = validatePatterns(patterns);
   if (errors.length) throw new Error(errors.join(" "));
-  const [width, height] = pageSize(s),
-    m = s.margin;
-  const pitch = pitchFor(s),
-    slit = (pitch * s.openPercent) / 100;
+  const s = patterns[0];
+  const [width, height] = pageSize(patterns), m = s.margin;
+  const footer = footerHeight(patterns, width - 2 * m);
+  const calibration = calibrationHeight(patterns);
   const shapes: Shape[] = [];
   const text = (
     x: number,
@@ -377,109 +454,76 @@ export function buildSheet(s: Settings): Sheet {
     fill = "#000000",
     stroke?: string,
   ) => shapes.push({ type: "rect", x, y, w, h, fill, stroke, weight: 0.15 });
-  text(m, m + 4, 4, `${maskNames[s.maskType].toUpperCase()} / FOCUSING MASK`, true);
-  text(
-    m,
-    m + 10,
-    2.6,
-    `${fmt(s.focalLength)} mm  |  Pupil ${fmt(apertureFor(s))} mm  |  Pattern ${fmt(s.patternDiameter)} mm  |  ${s.borderShape === "square" ? "Square side" : "Circle diameter"} ${fmt(s.outerDiameter)} mm`,
-  );
-  text(
-    m,
-    m + 15,
-    2.6,
-    `Pitch ${fmt(pitch)} mm  |  Open ${fmt(slit)} mm  |  Bar ${fmt(pitch - slit)} mm  |  ${s.maskType === "carey" ? `Included L/R ${fmt(s.careyLeftAngle)}/${fmt(s.careyRightAngle)} deg` : `Angle +/-${fmt(s.angle)} deg`}`,
-  );
-  text(
-    m,
-    m + 20,
-    2.6,
-    s.fabrication === "film"
-      ? `TRANSPARENCY / no ribs  |  Obstruction ${fmt(s.obstruction)} mm  |  Black = opaque; white = clear film`
-      : `Support ${fmt(s.bridge)} mm  |  Obstruction ${fmt(s.obstruction)} mm  |  Black = opaque / keep; white = open`,
-  );
-  const bottom = height - m - (s.calibration ? CALIBRATION : FOOTER);
-  const cx = width / 2,
-    cy = (m + HEADER + bottom) / 2;
-  if (s.borderShape === "square")
-    rect(cx - s.outerDiameter / 2, cy - s.outerDiameter / 2, s.outerDiameter, s.outerDiameter);
-  else shapes.push({
-    type: "circle",
-    x: cx,
-    y: cy,
-    r: s.outerDiameter / 2,
-    fill: "#000000",
-  });
-  for (const points of slitPolygons(s))
-    shapes.push({
-      type: "polygon",
-      points: points.map((p) => ({ x: p.x + cx, y: p.y + cy })),
-      fill: "#ffffff",
-    });
-  if (s.obstruction > 0)
-    shapes.push({
-      type: "circle",
-      x: cx,
-      y: cy,
-      r: s.obstruction / 2,
-      fill: "#000000",
-    });
+  const bottom = height - m - calibration - footer;
+  const packed = packPatterns(patterns, width - 2 * m);
+  const top = m + LABEL_SPACE;
+  for (const item of packed.placements) {
+    const pattern = patterns[item.index];
+    const cx = m + item.x + item.size / 2, cy = top + item.y + item.size / 2;
+
+    if (pattern.borderShape === "square")
+      rect(cx - item.size / 2, cy - item.size / 2, item.size, item.size);
+    else shapes.push({ type: "circle", x: cx, y: cy, r: item.size / 2, fill: "#000000" });
+    for (const points of slitPolygons(pattern))
+      shapes.push({ type: "polygon", points: points.map((p) => ({ x: p.x + cx, y: p.y + cy })), fill: "#ffffff" });
+    if (pattern.obstruction > 0)
+      shapes.push({ type: "circle", x: cx, y: cy, r: pattern.obstruction / 2, fill: "#000000" });
+    text(cx - item.size / 2, cy - item.size / 2 - 0.6, 1.8, `${item.index + 1}. ${maskNames[pattern.maskType]}`);
+  }
   if (s.calibration) {
-    const y = height - m - CALIBRATION + 5;
+    const y = bottom;
     line(m, y, width - m, y);
-    text(m, y + 6, 3, "PRINT CALIBRATION", true);
-    const rx = m + 5,
-      ry = y + 13;
-    // Two independent 50 mm axes expose non-uniform print scaling.
+    const rx = m + 1, ry = y + 3;
+    // Shorten the Y ruler's extent; all ticks still represent exactly 1 mm.
     line(rx, ry, rx + 50, ry);
-    line(rx, ry, rx, ry + 50);
+    line(rx, ry, rx, ry + 25);
     for (let i = 0; i <= 50; i++) {
-      const tick = i % 10 === 0 ? 3 : i % 5 === 0 ? 2 : 1;
+      const tick = i % 10 === 0 ? 1.5 : i % 5 === 0 ? 1 : 0.5;
       line(rx + i, ry, rx + i, ry + tick);
-      line(rx, ry + i, rx + tick, ry + i);
-      if (i % 10 === 0) {
-        text(rx + i - 1.5, ry + 6, 2, `${i}`);
-        if (i > 0) text(rx + 4, ry + i + 0.7, 2, `${i}`);
-      }
+      if (i <= 25) line(rx, ry + i, rx + tick, ry + i);
     }
-    text(rx + 18, ry - 2, 2.3, "X: 50 mm");
-    text(rx + 12, ry + 48, 2.3, "Y: 50 mm");
-    rect(rx + 20, ry + 17, 20, 20, "none", "#000000");
+    text(rx, ry - 0.8, 1.8, "0");
+    text(rx + 17, ry - 0.8, 1.8, "X: 50 mm");
+    text(rx + 48, ry - 0.8, 1.8, "50");
+    text(rx + 3, ry + 24, 1.8, "Y: 25 mm");
+    rect(rx + 22, ry + 5, 20, 20, "none", "#000000");
     shapes.push({
-      type: "circle",
-      x: rx + 30,
-      y: ry + 27,
-      r: 10,
-      fill: "none",
-      stroke: "#000000",
-      weight: 0.15,
+      type: "circle", x: rx + 32, y: ry + 15, r: 10,
+      fill: "none", stroke: "#000000", weight: 0.15,
     });
-    text(rx + 18, ry + 42, 2.3, "20 x 20 mm");
-    const sx = m + 69;
-    text(sx, ry, 2.5, "LINE / GAP WIDTH (mm)", true);
+    text(rx + 22, ry + 4, 1.8, "20 x 20 mm");
+    const sx = m + 64;
+    text(sx, y + 2.2, 1.8, "LINE / GAP (mm)", true);
     [0.1, 0.2, 0.3, 0.5, 1].forEach((gap, i) => {
       const x = sx + i * 16;
-      for (let j = 0; j < 12 / (2 * gap); j++) {
-        rect(x + j * gap * 2, ry + 3, gap, 6);
-        rect(x, ry + 12 + j * gap * 2, 6, gap);
+      // Reduce patch footprints, preserving every physical line/gap width.
+      for (let pos = 0; pos < 8; pos += 2 * gap) {
+        rect(x + pos, y + 4, Math.min(gap, 8 - pos), 4);
+        rect(x, y + 10 + pos, 4, Math.min(gap, 8 - pos));
       }
-      text(x, ry + 28, 2.3, fmt(gap));
+      text(x, y + 20, 1.8, fmt(gap));
     });
-    text(sx, ry + 34, 2.4, `MASK PITCH: ${fmt(pitch)} mm`);
-    // Show actual duty cycle, with no rescaling, in both printer axes.
-    const sampleWidth = Math.min(75, width - m - sx);
-    for (let pos = 0; pos < sampleWidth - 10; pos += pitch)
-      rect(sx + pos, ry + 37, Math.min(pitch - slit, sampleWidth - 10 - pos), 5);
-    // Actual pitch in the other printer axis, including sub-0.1 mm features.
-    for (let pos = 0; pos < 5; pos += pitch)
-      rect(sx + sampleWidth - 7, ry + 37 + pos, 5, Math.min(pitch - slit, 5 - pos));
-    text(sx, ry + 47, 2.3, "Fine lines should remain separate in both axes.");
+    const columnWidth = (width - 2 * m - 64) / 2;
+    patterns.forEach((pattern, i) => {
+      const pitch = pitchFor(pattern), slit = pitch * pattern.openPercent / 100;
+      const sampleY = y + 23 + Math.floor(i / 2) * 8;
+      const sampleX = sx + (i % 2) * columnWidth;
+      text(sampleX, sampleY, 1.8, `${i + 1}. Pitch ${fmt(pitch, 4)} mm`);
+      const sampleWidth = Math.min(32, columnWidth - 10);
+      for (let pos = 0; pos < sampleWidth; pos += pitch)
+        rect(sampleX + pos, sampleY + 1, Math.min(pitch - slit, sampleWidth - pos), 3);
+      for (let pos = 0; pos < 3; pos += pitch)
+        rect(sampleX + sampleWidth + 2, sampleY + 1 + pos, 3, Math.min(pitch - slit, 3 - pos));
+    });
   }
-  text(
-    m,
-    height - m - 2,
-    2.6,
-    "Print at 100% / Actual size. Disable Fit to page. Measure the calibration targets before use.",
-  );
-  return { maskType: s.maskType, width, height, shapes };
+  let footerY = height - m - footer + 3.1;
+  line(m, height - m - footer, width - m, height - m - footer);
+  for (const lines of metadataLines(patterns, width - 2 * m)) {
+    for (const value of lines) {
+      shapes.push({ type: "text", x: m, y: footerY, size: FOOTER_SIZE, text: value, font: "courier" });
+      footerY += FOOTER_LEADING;
+    }
+    footerY += 0.6;
+  }
+  return { maskType: s.maskType, patternCount: patterns.length, width, height, shapes };
 }

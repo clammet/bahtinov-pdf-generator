@@ -18,11 +18,12 @@ function svgShape(s: Shape): string {
     case "line":
       return `<line x1="${s.x}" y1="${s.y}" x2="${s.x2}" y2="${s.y2}" stroke="#000000" stroke-width="${s.weight}"/>`;
     case "text":
-      return `<text x="${s.x}" y="${s.y}" font-family="Helvetica, Arial, sans-serif" font-size="${s.size}" font-weight="${s.bold ? 700 : 400}" fill="#000000">${esc(s.text)}</text>`;
+      return `<text x="${s.x}" y="${s.y}" font-family="${s.font === "courier" ? "Courier, monospace" : "Helvetica, Arial, sans-serif"}" font-size="${s.size}" font-weight="${s.bold ? 700 : 400}" fill="#000000">${esc(s.text)}</text>`;
   }
 }
 export function toSvg(sheet: Sheet): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${sheet.width}mm" height="${sheet.height}mm" viewBox="0 0 ${sheet.width} ${sheet.height}" role="img" aria-label="${maskNames[sheet.maskType]} mask print sheet"><title>${maskNames[sheet.maskType]} mask — print at actual size</title><rect width="100%" height="100%" fill="white"/>${sheet.shapes.map(svgShape).join("")}</svg>`;
+  const title = sheet.patternCount > 1 ? `${sheet.patternCount} focusing masks` : `${maskNames[sheet.maskType]} mask`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${sheet.width}mm" height="${sheet.height}mm" viewBox="0 0 ${sheet.width} ${sheet.height}" role="img" aria-label="${title} print sheet"><title>${title} — print at actual size</title><rect width="100%" height="100%" fill="white"/>${sheet.shapes.map(svgShape).join("")}</svg>`;
 }
 export async function toPdf(sheet: Sheet): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
@@ -34,7 +35,7 @@ export async function toPdf(sheet: Sheet): Promise<Blob> {
     floatPrecision: 8,
   });
   doc.setProperties({
-    title: `${maskNames[sheet.maskType]} focusing mask`,
+    title: sheet.patternCount > 1 ? `${sheet.patternCount} focusing masks` : `${maskNames[sheet.maskType]} focusing mask`,
     subject: "Print at 100% / Actual size",
     creator: "Focusing mask generator",
   });
@@ -42,7 +43,7 @@ export async function toPdf(sheet: Sheet): Promise<Blob> {
   doc.viewerPreferences({ PrintScaling: "None" });
   for (const s of sheet.shapes) {
     if (s.type === "text") {
-      doc.setFont("helvetica", s.bold ? "bold" : "normal");
+      doc.setFont(s.font ?? "helvetica", s.bold ? "bold" : "normal");
       doc.setFontSize((s.size * 72) / 25.4);
       doc.setTextColor("#000000");
       doc.text(s.text, s.x, s.y);

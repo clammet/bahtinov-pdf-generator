@@ -12,6 +12,8 @@ import {
   pitchFor,
   slitPolygons,
   validate,
+  validatePatterns,
+  MAX_PATTERNS,
   warnings,
 } from "./pattern";
 import { toPdf, toSvg } from "./export";
@@ -35,15 +37,16 @@ describe("physical mask geometry", () => {
       const disk = circle.shapes.find((s) => s.type === "circle")!;
       const surround = square.shapes.find((s) => s.type === "rect")!;
       expect(surround).toMatchObject({
-        x: disk.x - disk.r, y: disk.y - disk.r,
+        x: disk.x - disk.r,
         w: settings.outerDiameter, h: settings.outerDiameter, fill: "#000000",
       });
-      expect(square.shapes.filter((s) => s.type === "polygon")).toEqual(
-        circle.shapes.filter((s) => s.type === "polygon"),
-      );
-      expect(square.shapes.filter((s) => s.type === "circle")).toEqual(
-        circle.shapes.filter((s) => s.type === "circle").slice(1),
-      );
+      const relativeSlits = (sheet: ReturnType<typeof buildSheet>, cx: number, cy: number) =>
+        sheet.shapes.filter((s) => s.type === "polygon").map((s) =>
+          s.points.map((p) => [Number((p.x - cx).toFixed(8)), Number((p.y - cy).toFixed(8))]));
+      expect(relativeSlits(square, surround.x + surround.w / 2, surround.y + surround.h / 2))
+        .toEqual(relativeSlits(circle, disk.x, disk.y));
+      expect(square.shapes.find((s) => s.type === "circle"))
+        .toMatchObject({ r: 10, fill: "#000000" });
       expect(square.shapes.indexOf(surround)).toBeLessThan(
         square.shapes.findIndex((s) => s.type === "polygon"),
       );
@@ -150,25 +153,28 @@ describe("physical mask geometry", () => {
     expect(() => buildSheet({ ...defaults, fStop: 0 })).toThrow();
   });
 
-  it.each(["circle", "square"] as const)("rejects a %s mask that cannot fit, and enlarges only custom paper", (borderShape) => {
+  it.each(["circle", "square"] as const)("fits a large %s mask with compact calibration and enlarges only custom paper", (borderShape) => {
     const large = { ...defaults, borderShape, patternDiameter: 180, outerDiameter: 190 };
-    expect(validate(large).join(" ")).toContain("173 mm");
+    expect(validate(large)).toEqual([]);
+    expect(validate({ ...large, outerDiameter: 200 }).join(" ")).toContain("do not fit");
     expect(validate({ ...large, calibration: false })).toEqual([]);
     expect(validate({ ...large, paper: "a3" })).toEqual([]);
     expect(validate({ ...large, paper: "custom" })).toEqual([]);
-    expect(pageSize({ ...large, paper: "custom" })).toEqual([210, 314]);
+    const custom = { ...large, paper: "custom" as const };
+    expect(pageSize(custom)[0]).toBe(210);
+    expect(pageSize(custom)[1]).toBeGreaterThan(large.outerDiameter + 2 * large.margin);
     const sheet = buildSheet({ ...large, paper: "custom" });
     if (borderShape === "circle")
       expect(sheet.shapes.find((s) => s.type === "circle")).toMatchObject({ r: 95 });
     else
-      expect(sheet.shapes.find((s) => s.type === "rect")).toMatchObject({ x: 10, y: 38, w: 190, h: 190 });
+      expect(sheet.shapes.find((s) => s.type === "rect")).toMatchObject({ x: 10, w: 190, h: 190 });
   });
 
   it("preserves absolute calibration dimensions and removes targets when disabled", () => {
     const sheet = buildSheet(defaults);
     const lines = sheet.shapes.filter((s) => s.type === "line");
     expect(lines.some((s) => s.x2 - s.x === 50 && s.y === s.y2)).toBe(true);
-    expect(lines.some((s) => s.y2 - s.y === 50 && s.x === s.x2)).toBe(true);
+    expect(lines.some((s) => Math.abs(s.y2 - s.y - 25) < 1e-8 && s.x === s.x2)).toBe(true);
     expect(
       sheet.shapes.some((s) => s.type === "rect" && s.w === 20 && s.h === 20),
     ).toBe(true);
@@ -310,8 +316,8 @@ describe("optical inputs and fabrication constraints", () => {
     const settings = { ...defaults, ...sigma14Preset, dpi: 2400, minimumWidth: printerMinimumWidth(2400) };
     const width = pitchFor(settings) / 2;
     const patches = buildSheet(settings).shapes.filter((s) => s.type === "rect");
-    expect(patches.some((s) => Math.abs(s.w - width) < 1e-9 && s.h === 5)).toBe(true);
-    expect(patches.some((s) => s.w === 5 && Math.abs(s.h - width) < 1e-9)).toBe(true);
+    expect(patches.some((s) => Math.abs(s.w - width) < 1e-9 && s.h === 3)).toBe(true);
+    expect(patches.some((s) => s.w === 3 && Math.abs(s.h - width) < 1e-9)).toBe(true);
   });
 
   it("raises automatic pitch enough for both slits and bars at unequal open fractions", () => {
@@ -396,5 +402,122 @@ describe("vector exports", () => {
         expect(content).not.toContain("/Subtype /Image");
       }
     }
+  });
+});
+
+
+describe("multiple patterns on a physical sheet", () => {
+  const first: Settings = { ...defaults, calibration: false, patternDiameter: 65, outerDiameter: 75 };
+  const second: Settings = { ...first, maskType: "carey", focalLength: 600, borderShape: "square", patternDiameter: 80, outerDiameter: 90, obstruction: 15 };
+
+  it("packs independent masks without overlap, resizing or changing their slits", () => {
+    const patterns = [first, second, { ...first, outerDiameter: 80 }];
+    const sheet = buildSheet(patterns);
+    expect(sheet.patternCount).toBe(3);
+    const circles = sheet.shapes.filter((s) => s.type === "circle").filter((s) => s.r > 20);
+    const square = sheet.shapes.find((s) => s.type === "rect")!;
+    const boxes = [
+      ...circles.map((s) => ({ x: s.x - s.r, y: s.y - s.r, size: 2 * s.r })),
+      { x: square.x, y: square.y, size: square.w },
+    ];
+    expect(boxes.map((b) => b.size).sort()).toEqual([75, 80, 90]);
+    for (const [index, box] of boxes.entries()) {
+      expect(box.x).toBeGreaterThanOrEqual(first.margin);
+      expect(box.x + box.size).toBeLessThanOrEqual(sheet.width - first.margin);
+      for (const other of boxes.slice(index + 1))
+        expect(box.x + box.size <= other.x || other.x + other.size <= box.x ||
+          box.y + box.size <= other.y || other.y + other.size <= box.y).toBe(true);
+    }
+    expect(sheet.shapes.filter((s) => s.type === "polygon")).toHaveLength(
+      patterns.reduce((sum, pattern) => sum + slitPolygons(pattern).length, 0));
+    const squareSlits = sheet.shapes.filter((s) => s.type === "polygon").filter((s) =>
+      s.points.every((p) => p.x >= square.x && p.x <= square.x + square.w && p.y >= square.y && p.y <= square.y + square.h));
+    expect(squareSlits).toHaveLength(slitPolygons(second).length);
+    const expected = slitPolygons(second).flat();
+    squareSlits.flatMap((s) => s.points).forEach((p, index) => {
+      expect(p.x - square.x - square.w / 2).toBeCloseTo(expected[index].x, 8);
+      expect(p.y - square.y - square.h / 2).toBeCloseTo(expected[index].y, 8);
+    });
+  });
+
+  it("keeps all wrapped footer entries below every mask and within page margins", () => {
+    const patterns = [first, second, { ...first, camera: "custom" as const, pixelSize: 3.76 }];
+    const sheet = buildSheet(patterns);
+    const footer = sheet.shapes.filter((s) => s.type === "text").filter((s) => s.font === "courier");
+    expect(footer.filter((s) => /^\d+\. /.test(s.text))).toHaveLength(patterns.length);
+    const bottom = Math.max(...sheet.shapes.flatMap((s) =>
+      s.type === "circle" ? [s.y + s.r] : s.type === "rect" ? [s.y + s.h] : []));
+    for (const line of footer) {
+      expect(line.y - line.size).toBeGreaterThan(bottom);
+      expect(line.x + line.text.length * line.size * 0.6).toBeLessThanOrEqual(sheet.width - first.margin);
+      expect(line.y).toBeLessThan(sheet.height - first.margin);
+    }
+  });
+
+  it.each(["circle", "square"] as const)("fits two 101 mm patterns with 5 mm borders vertically on A4 (%s)", async (borderShape) => {
+    const patterns = [
+      { ...defaults, borderShape, patternDiameter: 101, outerDiameter: 111, camera: "custom" as const, pixelSize: 3.76 },
+      { ...defaults, borderShape, maskType: "carey" as const, patternDiameter: 101, outerDiameter: 111, focalLength: 600 },
+    ];
+    expect(validatePatterns(patterns)).toEqual([]);
+    const sheet = buildSheet(patterns);
+    expect([sheet.width, sheet.height]).toEqual([210, 297]);
+    const bounds = sheet.shapes.flatMap((s) =>
+      s.type === "circle" && s.r === 55.5 ? [{ x: s.x - s.r, y: s.y - s.r, size: 2 * s.r }] :
+      s.type === "rect" && s.w === 111 ? [{ x: s.x, y: s.y, size: s.w }] : []);
+    expect(bounds).toHaveLength(2);
+    expect(bounds[0].x).toBe(bounds[1].x);
+    expect(bounds[0].y).toBe(13);
+    expect(bounds[1].y - bounds[0].y).toBe(114);
+    const calibrationTop = sheet.shapes.find((s) => s.type === "line")!;
+    expect(calibrationTop.y).toBeGreaterThan(bounds[1].y + bounds[1].size);
+    const footer = sheet.shapes.filter((s) => s.type === "text").filter((s) => s.font === "courier");
+    const calibrationLines = sheet.shapes.filter((s) => s.type === "line").slice(0, -1);
+    const calibrationBottom = Math.max(
+      ...calibrationLines.flatMap((s) => [s.y, s.y2]),
+      ...sheet.shapes.flatMap((s) => s.type === "rect" && s.w !== 111 ? [s.y + s.h] : []),
+    );
+    for (const text of footer) {
+      expect(text.y - text.size).toBeGreaterThan(calibrationBottom);
+      expect(text.y).toBeLessThanOrEqual(sheet.height - defaults.margin);
+    }
+    const content = await (await toPdf(sheet)).text();
+    expect(content).toContain("/Count 1");
+    expect(content).not.toContain("/Subtype /Image");
+  });
+
+  it("rejects overflowing sheets and invalid inactive patterns, and sizes custom paper to fit", () => {
+    const patterns = [defaults, { ...defaults, maskType: "carey" as const }, defaults];
+    expect(validatePatterns(patterns)).not.toEqual([]);
+    expect(() => buildSheet(patterns)).toThrow();
+    const custom = patterns.map((s) => ({ ...s, paper: "custom" as const }));
+    expect(validatePatterns(custom)).toEqual([]);
+    expect(buildSheet(custom).patternCount).toBe(3);
+    expect(validatePatterns([first, { ...second, fStop: 0 }])[0]).toMatch(/^Pattern 2:/);
+    expect(validatePatterns([])).not.toEqual([]);
+    expect(validatePatterns(Array(MAX_PATTERNS + 1).fill(first))).not.toEqual([]);
+  });
+
+  it("retains actual-pitch samples for each pattern when calibration is enabled", () => {
+    const patterns = [first, { ...second, pitchMode: "manual" as const, manualPitch: 1.5, openPercent: 40 }]
+      .map((s) => ({ ...s, paper: "custom" as const, calibration: true }));
+    const sheet = buildSheet(patterns);
+    const patches = sheet.shapes.filter((s) => s.type === "rect");
+    for (const pattern of patterns) {
+      const bar = pitchFor(pattern) * (100 - pattern.openPercent) / 100;
+      expect(patches.some((s) => Math.abs(s.w - bar) < 1e-8 && s.h === 3)).toBe(true);
+      expect(patches.some((s) => Math.abs(s.h - bar) < 1e-8 && s.w === 3)).toBe(true);
+    }
+  });
+
+  it("exports multiple masks as one vector PDF page at the sheet's physical size", async () => {
+    const sheet = buildSheet([first, second]);
+    expect(toSvg(sheet).match(/<polygon /g)).toHaveLength(sheet.shapes.filter((s) => s.type === "polygon").length);
+    const content = await (await toPdf(sheet)).text();
+    expect(content).toContain("/Count 1");
+    expect(content).not.toContain("/Subtype /Image");
+    const box = content.match(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/)!;
+    expect(Number(box[1]) * 25.4 / 72).toBeCloseTo(sheet.width, 5);
+    expect(Number(box[2]) * 25.4 / 72).toBeCloseTo(sheet.height, 5);
   });
 });

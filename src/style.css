@@ -760,3 +760,22 @@ summary:hover {
       color 0.15s;
   }
 }
+
+.pattern-manager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 20px 23px;
+  background: #18212b;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.pattern-manager > .field {
+  flex: 1 1 250px;
+}
+.pattern-manager > .helper {
+  flex-basis: 100%;
+  margin: 0;
+}
